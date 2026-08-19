@@ -1,0 +1,39 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.npm
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Test / coverage artifacts
+coverage/
+.nyc_output/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# e2e fixtures: the pinned Pi CLI is downloaded, never committed
+.e2e-cache/
+.pi/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Agent harness runtime files injected per session (never committed)
+.claude/skills/
+.mcp.json
