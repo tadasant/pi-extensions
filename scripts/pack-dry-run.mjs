@@ -17,10 +17,20 @@ import { PUBLISHABLE } from "./packages.mjs";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 let failed = false;
 
-/** Every path the package's `pi` manifest promises must exist in the tarball. */
-function manifestPaths(pkg) {
+/**
+ * Every resource the package's `pi` manifest promises.
+ *
+ * Extensions are exact file paths, so they must appear verbatim in the tarball.
+ * Skills, prompts, and themes are directories, so require at least one shipped file
+ * under each — an empty declared directory is the same broken promise.
+ */
+function manifestExpectations(pkg) {
   const pi = pkg.pi ?? {};
-  return [...(pi.extensions ?? [])].map((entry) => entry.replace(/^\.\//, ""));
+  const clean = (entry) => entry.replace(/^\.\//, "").replace(/\/$/, "");
+  return {
+    files: (pi.extensions ?? []).map(clean),
+    directories: [...(pi.skills ?? []), ...(pi.prompts ?? []), ...(pi.themes ?? [])].map(clean),
+  };
 }
 
 for (const dir of PUBLISHABLE) {
@@ -43,17 +53,30 @@ for (const dir of PUBLISHABLE) {
       stdio: ["ignore", "ignore", "inherit"],
     });
     const tarball = readdirSync(staging).find((name) => name.endsWith(".tgz"));
+    if (!tarball) throw new Error(`npm pack produced no tarball for ${pkg.name} in ${staging}`);
     const entries = execFileSync("tar", ["-tzf", join(staging, tarball)], { encoding: "utf8" })
       .split("\n")
       .map((line) => line.replace(/^package\//, "").trim())
       .filter(Boolean);
 
-    for (const promised of manifestPaths(pkg)) {
+    const { files, directories } = manifestExpectations(pkg);
+    for (const promised of files) {
       if (!entries.includes(promised)) {
         console.error(`  MISSING: package.json "pi" manifest points at ${promised}`);
         failed = true;
       } else {
         console.log(`  ok: ${promised}`);
+      }
+    }
+    for (const promised of directories) {
+      const shipped = entries.filter((entry) => entry.startsWith(`${promised}/`));
+      if (shipped.length === 0) {
+        console.error(
+          `  MISSING: package.json "pi" manifest declares ${promised}/ but it is empty`,
+        );
+        failed = true;
+      } else {
+        console.log(`  ok: ${promised}/ (${shipped.length} files)`);
       }
     }
     if (!entries.includes("README.md")) {

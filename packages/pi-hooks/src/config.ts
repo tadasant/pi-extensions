@@ -49,6 +49,8 @@ export function stripJsonComments(text: string): string {
       continue;
     }
     if (inBlock) {
+      // Keep newlines so JSON.parse error line numbers still point at the real line.
+      if (char === "\n") out += char;
       if (char === "*" && next === "/") {
         inBlock = false;
         i++;
@@ -105,10 +107,15 @@ export function discoverConfigPaths(options: {
       .filter(Boolean)
       .map((entry) => (isAbsolute(entry) ? entry : resolve(options.cwd, entry)));
   }
+  // Scope is the outer loop: every user-level config must sort before every
+  // project-level one, whichever filename each happens to use. Iterating filenames
+  // first would let a project `hooks.json` load ahead of a user `hooks.jsonc` and
+  // silently invert the documented precedence.
   const candidates: string[] = [];
-  for (const filename of CONFIG_FILENAMES) {
-    candidates.push(join(options.agentDir, filename));
-    candidates.push(join(options.cwd, ".pi", filename));
+  for (const dir of [options.agentDir, join(options.cwd, ".pi")]) {
+    for (const filename of CONFIG_FILENAMES) {
+      candidates.push(join(dir, filename));
+    }
   }
   return candidates.filter((path) => existsSync(path));
 }
@@ -139,9 +146,70 @@ function asArray<T>(value: T | T[] | undefined): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
+const MATCHER_PATTERN_FIELDS = ["tool", "prompt", "reason"] as const;
+
+function isPatternValue(value: unknown): boolean {
+  return (
+    typeof value === "string" || (Array.isArray(value) && value.every((v) => typeof v === "string"))
+  );
+}
+
+/**
+ * Check every pattern in a matcher is a string or string[].
+ *
+ * Matching runs on Pi's hot path for every event, and `matchPattern` assumes a
+ * string. A `{"tool": 123}` that reaches it throws `pattern.startsWith is not a
+ * function` — which Pi hands back to the model as the tool result, naming neither
+ * the hook nor the field. Catching it here makes it a startup error instead.
+ */
+function validateMatcher(matcher: unknown, label: string, path = "match"): string[] {
+  const errors: string[] = [];
+  if (matcher === undefined) return errors;
+  if (!matcher || typeof matcher !== "object" || Array.isArray(matcher)) {
+    return [`${label}: "${path}" must be an object`];
+  }
+  const m = matcher as Record<string, unknown>;
+  for (const field of MATCHER_PATTERN_FIELDS) {
+    if (m[field] !== undefined && !isPatternValue(m[field])) {
+      errors.push(`${label}: "${path}.${field}" must be a string or an array of strings`);
+    }
+  }
+  if (m.isError !== undefined && typeof m.isError !== "boolean") {
+    errors.push(`${label}: "${path}.isError" must be a boolean`);
+  }
+  if (m.input !== undefined) {
+    if (!m.input || typeof m.input !== "object" || Array.isArray(m.input)) {
+      errors.push(`${label}: "${path}.input" must be an object`);
+    } else {
+      for (const [key, value] of Object.entries(m.input as Record<string, unknown>)) {
+        if (!isPatternValue(value)) {
+          errors.push(`${label}: "${path}.input.${key}" must be a string or an array of strings`);
+        }
+      }
+    }
+  }
+  for (const combinator of ["all", "any"] as const) {
+    const nested = m[combinator];
+    if (nested === undefined) continue;
+    if (!Array.isArray(nested)) {
+      errors.push(`${label}: "${path}.${combinator}" must be an array of matchers`);
+      continue;
+    }
+    nested.forEach((entry, index) => {
+      errors.push(...validateMatcher(entry, label, `${path}.${combinator}[${index}]`));
+    });
+  }
+  if (m.not !== undefined) errors.push(...validateMatcher(m.not, label, `${path}.not`));
+  return errors;
+}
+
 /** Reject anything that would blow up later, with a message naming the offender. */
 export function validateHook(hook: HookDefinition, label: string): string[] {
   const errors: string[] = [];
+  if (!hook || typeof hook !== "object" || Array.isArray(hook)) {
+    return [`${label}: expected a hook object`];
+  }
+  errors.push(...validateMatcher(hook.match, label));
   const events = asArray(hook.on);
   if (events.length === 0) errors.push(`${label}: "on" is required`);
   for (const event of events) {
@@ -194,11 +262,21 @@ function loadOne(path: string, seen: Set<string>, out: LoadedConfig): void {
     return;
   }
 
-  for (const spec of parsed.extends ?? []) {
-    try {
-      loadOne(resolveExtends(spec, dirname(key)), seen, out);
-    } catch (error) {
-      out.errors.push(`${key}: cannot extend "${spec}": ${(error as Error).message}`);
+  const extendsList = parsed.extends;
+  if (extendsList !== undefined && !Array.isArray(extendsList)) {
+    // A bare string here would otherwise be iterated character by character.
+    out.errors.push(`${key}: "extends" must be an array of strings`);
+  } else {
+    for (const spec of extendsList ?? []) {
+      if (typeof spec !== "string") {
+        out.errors.push(`${key}: every "extends" entry must be a string`);
+        continue;
+      }
+      try {
+        loadOne(resolveExtends(spec, dirname(key)), seen, out);
+      } catch (error) {
+        out.errors.push(`${key}: cannot extend "${spec}": ${(error as Error).message}`);
+      }
     }
   }
 
@@ -209,6 +287,8 @@ function loadOne(path: string, seen: Set<string>, out: LoadedConfig): void {
   }
   hooks.forEach((definition, index) => {
     const label = `${key} #${index}${definition?.name ? ` (${definition.name})` : ""}`;
+    // A stray null or a non-object entry is a typo, not a reason to drop every
+    // other hook in the file.
     const errors = validateHook(definition, label);
     if (errors.length > 0) {
       out.errors.push(...errors);
@@ -237,5 +317,3 @@ export function loadConfig(paths: string[]): LoadedConfig {
 export function hooksForEvent(config: LoadedConfig, event: HookEvent): LoadedHook[] {
   return config.hooks.filter((hook) => asArray(hook.definition.on).includes(event));
 }
-
-export { asArray };

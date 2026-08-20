@@ -1,8 +1,14 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { hookEnv, parseControl, runCommandAction } from "../src/actions.ts";
+import {
+  hookEnv,
+  MAX_CAPTURED_OUTPUT_BYTES,
+  MAX_ENV_VALUE_BYTES,
+  parseControl,
+  runCommandAction,
+} from "../src/actions.ts";
 import { HookRunner } from "../src/runner.ts";
 import type { HookDefinition, LoadedConfig } from "../src/types.ts";
 
@@ -276,6 +282,143 @@ describe("command actions", () => {
     });
     await runner.dispatch({ event: "tool_call", toolName: "edit", input: {} });
     expect(readFileSync(out, "utf8")).toBe("tool-edit");
+  });
+});
+
+describe("hardening", () => {
+  it("ignores JSON on stdout that carries no control key", async () => {
+    // eslint -f json / semgrep --json print JSON and exit non-zero. Treating that
+    // as a control object would cancel the exit code and silently do nothing.
+    const { runner } = makeRunner({
+      name: "linter",
+      on: "tool_call",
+      action: { type: "command", command: `printf '{"errors":[1]}'; exit 1` },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(true);
+    expect(outcome.reason).toContain("linter");
+  });
+
+  it("still accepts a real control object", async () => {
+    const { runner } = makeRunner({
+      on: "tool_call",
+      action: { type: "command", command: `printf '{"block":true,"reason":"policy"}'; exit 1` },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome).toMatchObject({ blocked: true, reason: "policy" });
+  });
+
+  it("logs rather than pretending to block on a non-blockable event", async () => {
+    // `blocked` on session_start is dropped by the extension, so a swallowed
+    // failure would be completely invisible.
+    const { runner, logs } = makeRunner({
+      name: "startup",
+      on: "session_start",
+      action: { type: "command", command: "echo boom >&2; exit 2" },
+    });
+    const outcome = await runner.dispatch({ event: "session_start" });
+    expect(outcome.blocked).toBe(false);
+    expect(logs.join("\n")).toContain("startup");
+    expect(logs.join("\n")).toContain("boom");
+  });
+
+  it("refuses a prototype-polluting patchInput from a hook script", async () => {
+    const { runner, logs } = makeRunner({
+      name: "evil",
+      on: "tool_call",
+      action: { type: "command", command: `printf '{"patchInput":{"__proto__.pwned":true}}'` },
+    });
+    await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(({} as Record<string, unknown>).pwned).toBeUndefined();
+    expect(logs.join("\n")).toContain("evil");
+  });
+
+  it("does not let a throwing matcher escape dispatch", async () => {
+    const { runner, logs } = makeRunner({
+      name: "broken",
+      on: "tool_call",
+      match: { tool: 42 as never },
+      action: { type: "block", reason: "never" },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(false);
+    expect(logs.join("\n")).toContain("broken");
+  });
+
+  it("truncates oversized env values instead of failing to spawn", async () => {
+    // A >128 KiB tool input used to make spawn throw E2BIG, so an audit hook
+    // silently did not run on exactly the oversized write it exists to inspect.
+    const out = join(dir, "size.txt");
+    const { runner } = makeRunner({
+      on: "tool_call",
+      action: { type: "command", command: `printf '%s' "\${#PI_HOOK_INPUT}" > ${out}` },
+    });
+    const outcome = await runner.dispatch({
+      event: "tool_call",
+      toolName: "write",
+      input: { content: "x".repeat(200_000) },
+    });
+    expect(outcome.blocked).toBe(false);
+    const measured = Number(readFileSync(out, "utf8"));
+    // Guard against a false pass: an empty file would also be "less than the cap".
+    expect(measured).toBeGreaterThan(1_000);
+    expect(measured).toBeLessThan(MAX_ENV_VALUE_BYTES + 200);
+  });
+
+  it("still delivers the untruncated event on stdin", async () => {
+    const out = join(dir, "stdin-size.txt");
+    const { runner } = makeRunner({
+      on: "tool_call",
+      action: { type: "command", command: `wc -c > ${out}` },
+    });
+    await runner.dispatch({
+      event: "tool_call",
+      toolName: "write",
+      input: { content: "x".repeat(200_000) },
+    });
+    expect(Number(readFileSync(out, "utf8").trim())).toBeGreaterThan(200_000);
+  });
+
+  it("caps captured output so a runaway hook cannot exhaust the heap", async () => {
+    const { runner } = makeRunner({
+      name: "flood",
+      on: "tool_call",
+      action: { type: "command", command: "yes badger | head -c 5000000; exit 1" },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(true);
+    expect((outcome.reason ?? "").length).toBeLessThan(MAX_CAPTURED_OUTPUT_BYTES + 5_000);
+  });
+
+  it("kills the whole process group on timeout", async () => {
+    // Killing only /bin/sh leaves a pipeline's children running; the marker file
+    // would appear a second after the hook "timed out".
+    const marker = join(dir, "survivor.txt");
+    const { runner } = makeRunner({
+      name: "slow",
+      on: "tool_call",
+      action: { type: "command", command: `(sleep 1; touch ${marker}) & wait`, timeoutMs: 100 },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.reason).toContain("timed out");
+    await new Promise((r) => setTimeout(r, 1_500));
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("records whether injected context should be displayed", async () => {
+    const { runner } = makeRunner(
+      { on: "before_agent_start", action: { type: "context", text: "quiet" } },
+      { on: "before_agent_start", action: { type: "context", text: "loud", display: true } },
+    );
+    const outcome = await runner.dispatch({ event: "before_agent_start", prompt: "p" });
+    expect(outcome.context).toEqual(["quiet", "loud"]);
+    expect(outcome.contextDisplay).toBe(true);
+
+    const { runner: quiet } = makeRunner({
+      on: "before_agent_start",
+      action: { type: "context", text: "quiet" },
+    });
+    expect((await quiet.dispatch({ event: "before_agent_start" })).contextDisplay).toBe(false);
   });
 });
 

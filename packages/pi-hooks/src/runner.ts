@@ -2,7 +2,14 @@ import { runCommandAction } from "./actions.ts";
 import { hooksForEvent } from "./config.ts";
 import { type MatchSubject, matches, setPath } from "./match.ts";
 import { renderDeep, renderTemplate } from "./template.ts";
-import type { CommandControl, HookAction, HookEvent, LoadedConfig, LoadedHook } from "./types.ts";
+import {
+  BLOCKABLE_EVENTS,
+  type CommandControl,
+  type HookAction,
+  type HookEvent,
+  type LoadedConfig,
+  type LoadedHook,
+} from "./types.ts";
 
 /** What a hook asked Pi to do, accumulated across every hook bound to one event. */
 export interface HookOutcome {
@@ -11,6 +18,8 @@ export interface HookOutcome {
   terminate?: boolean;
   /** Text to append to the conversation (`before_agent_start`). */
   context: string[];
+  /** Whether the injected context should be shown in the transcript. */
+  contextDisplay: boolean;
   /** Replacement text for a tool result (`tool_result`). */
   content?: string;
   /** Messages the extension should surface in the UI. */
@@ -20,7 +29,7 @@ export interface HookOutcome {
 }
 
 function emptyOutcome(): HookOutcome {
-  return { blocked: false, context: [], notifications: [], ran: [] };
+  return { blocked: false, context: [], contextDisplay: false, notifications: [], ran: [] };
 }
 
 export interface RunnerDeps {
@@ -37,7 +46,9 @@ export interface DispatchEvent extends MatchSubject {
   content?: string;
 }
 
-export function hookLabel(hook: LoadedHook): string {
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+function hookLabel(hook: LoadedHook): string {
   return hook.definition.name ?? `${hook.source}#${hook.index}`;
 }
 
@@ -77,7 +88,17 @@ export class HookRunner {
 
     for (const hook of candidates) {
       const label = hookLabel(hook);
-      if (!matches(hook.definition.match, event)) continue;
+      let applies: boolean;
+      try {
+        applies = matches(hook.definition.match, event);
+      } catch (error) {
+        // Config validation catches malformed matchers at load time; this is the
+        // backstop. Degrade to "did not match" rather than letting the throw reach
+        // Pi, which would hand a raw JS message to the model as the tool result.
+        this.log(`hook "${label}" matcher failed: ${(error as Error).message}`);
+        continue;
+      }
+      if (!applies) continue;
       if (hook.definition.once) {
         const key = `${hook.source}#${hook.index}`;
         if (this.firedOnce.has(key)) continue;
@@ -154,6 +175,8 @@ export class HookRunner {
       }
       case "context": {
         outcome.context.push(renderTemplate(action.text, context));
+        // Any hook asking to be displayed wins for the combined message.
+        if (action.display) outcome.contextDisplay = true;
         return;
       }
       case "patch-input": {
@@ -177,13 +200,16 @@ export class HookRunner {
         }
         if (result.exitCode === 0) return;
 
-        const blockOnFailure = action.blockOnFailure ?? true;
         const detail =
           result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
         const summary = result.timedOut
-          ? `hook "${label}" timed out after ${action.timeoutMs ?? 30_000}ms`
+          ? `hook "${label}" timed out after ${action.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`
           : `hook "${label}": ${detail}`;
-        if (blockOnFailure) {
+        // Blocking only means something on an event where Pi lets us veto. On
+        // `session_start` or `tool_result` a "block" would be silently dropped by
+        // the extension, so log the failure instead of swallowing it.
+        const canBlock = BLOCKABLE_EVENTS.includes(event.event);
+        if (canBlock && (action.blockOnFailure ?? true)) {
           outcome.blocked = true;
           outcome.reason = summary;
         } else {

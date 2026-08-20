@@ -7,7 +7,7 @@
       "match": {
         "tool": "bash",
         "input": {
-          "command": "/rm\\s+(-[a-zA-Z]*\\s+)*-?[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*\\s+(\\/|~|\\$HOME|\\/\\*|\\.\\s*$|\\*\\s*$)/"
+          "command": "/rm\\s+(?=(?:[^|;&\\n]*\\s)?(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)(\\s|$))(?=(?:[^|;&\\n]*\\s)?(?:-[a-zA-Z]*[fF][a-zA-Z]*|--force)(\\s|$))[^|;&\\n]*\\s[\\\"']?(\\/\\*?|~|\\$HOME|\\.\\/?|\\*)[\\\"']?\\s*($|[|;&\\n])/m"
         }
       },
       "action": {
@@ -22,7 +22,7 @@
       "match": {
         "tool": "bash",
         "input": {
-          "command": "/(curl|wget)\\s[^|]*\\|\\s*(sudo\\s+)?(ba|z|k|)sh\\b/"
+          "command": "/(curl|wget)\\s[^|\\n]*\\|\\s*(sudo\\s+)?(ba|z|k|)sh\\b/m"
         }
       },
       "action": {
@@ -35,7 +35,9 @@
       "on": "tool_call",
       "match": {
         "tool": "bash",
-        "input": { "command": "/(^|[|;&]\\s*)sudo\\s/" }
+        "input": {
+          "command": "/(^|[|;&\\n])\\s*sudo\\s/m"
+        }
       },
       "action": {
         "type": "block",
@@ -48,7 +50,7 @@
       "match": {
         "tool": "bash",
         "input": {
-          "command": "/(DROP\\s+(DATABASE|TABLE|SCHEMA)|TRUNCATE\\s+TABLE|db:drop|drop-database)/"
+          "command": "/(DROP\\s+(DATABASE|TABLE|SCHEMA)|TRUNCATE\\s+TABLE|db:drop|drop-database)/im"
         }
       },
       "action": {

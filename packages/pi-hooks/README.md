@@ -51,8 +51,10 @@ Lowest precedence first — every file found is merged:
 | `.pi/hooks.json` in the working directory | This project |
 
 `hooks.jsonc` is accepted at both locations, and `//` and `/* */` comments are
-allowed in either extension. Setting `PI_HOOKS_CONFIG` to a colon-separated list of
-paths replaces discovery entirely.
+allowed in either extension. If a directory contains both `hooks.json` and
+`hooks.jsonc`, both are loaded and merged. Setting `PI_HOOKS_CONFIG` to a
+colon-separated list of paths replaces discovery entirely (POSIX paths only — the
+separator is `:`).
 
 ## Events
 
@@ -80,11 +82,16 @@ paths replaces discovery entirely.
 ```
 
 - **Globs**: `*` stays inside a path segment, `**` crosses them, `{a,b}` alternates.
-- **Regex**: any pattern written as `/expr/flags`.
+  Globs are anchored — the whole value must match.
+- **Regex**: any pattern written as `/expr/flags`. Regexes are **unanchored**, so
+  `/log/` matches anywhere in the value. A pattern that looks like a regex but does
+  not compile (`/etc/sys` — the trailing segment reads as duplicate flags) falls
+  back to glob matching, so absolute paths still work.
 - **Negation**: a leading `!`. Within a list, positives are ORed and negatives are
   ANDed — so `["**/.env*", "!**/.env.example"]` reads the way it looks.
 - **Combinators**: `all`, `any`, `not` nest arbitrarily.
 - `input` paths are dot paths into the tool's arguments (`input.path`, `input.command`).
+- An empty list (`"tool": []`) imposes no constraint and therefore matches everything.
 
 ## Actions
 
@@ -121,8 +128,16 @@ environment variables, so a hook script never needs templating:
 
 Exit `0` and the call proceeds. Exit non-zero and the call is blocked, with stderr
 as the reason — set `"blockOnFailure": false` for an advisory hook that only logs.
+Blocking only applies to `tool_call`, `user_bash`, and `user_prompt`, the events Pi
+lets an extension veto; on any other event a failure is logged instead.
 
-For finer control, print a JSON object on stdout:
+Oversized values are truncated in the `PI_HOOK_*` variables (the OS caps a single
+environment string), so a hook inspecting a large payload should read stdin, which
+is never truncated.
+
+For finer control, print a JSON object on stdout containing at least one of the keys
+below. JSON that carries none of them — the output of `eslint -f json`, say — is
+treated as ordinary output, so the exit code still decides:
 
 ```json
 { "block": true, "reason": "…", "terminate": false,
@@ -130,9 +145,10 @@ For finer control, print a JSON object on stdout:
 ```
 
 Use `"command"` for a shell string (interpolated `{{…}}` values are shell-quoted, so
-a filename with a quote in it cannot break out) or `"argv"` for an argv array run
-with no shell at all. `timeoutMs` defaults to 30s; a hook that hangs is killed and
-does not stall the agent past its own timeout.
+a filename with a quote in it cannot break out — for that reason, do **not** wrap a
+`{{…}}` placeholder in quotes yourself) or `"argv"` for an argv array run with no
+shell at all. `timeoutMs` defaults to 30s; a hook that hangs has its whole process group killed
+and does not stall the agent past its own timeout. Captured output is capped at 1 MiB.
 
 ### `notify` and `context`
 
@@ -150,9 +166,9 @@ does not stall the agent past its own timeout.
 | Preset | What it stops |
 |---|---|
 | `preset:secrets` | Reading or writing `.env`, private keys, `.netrc`, service-account JSON; catting them out through bash. `.env.example` is exempt. |
-| `preset:git-guard` | `git push --force` without `--force-with-lease`, pushes straight to `main`/`master`, `git reset --hard`, `git clean -fd`. |
+| `preset:git-guard` | `git push --force` without `--force-with-lease`; pushes naming `main`, `master`, or `HEAD` as the refspec; `git reset --hard`; `git clean -fd`. A bare `git push` with no refspec is not matched — the branch it would push is not visible in the command. |
 | `preset:destructive-bash` | `rm -rf` of `/`, `~`, or the whole working tree; `curl … \| sh`; `sudo`; `DROP DATABASE`/`TRUNCATE`. |
-| `preset:bash-hardening` | Not a block — prepends `set -o pipefail` to bash commands that do not set their own options. |
+| `preset:bash-hardening` | Not a block — prepends `set -o pipefail` to bash commands that do not already begin with `set -e`/`-u`/`-x`. `pipefail` is a bashism; skip this preset if your bash tool runs `dash`. |
 | `preset:session-context` | Not a block — injects `git status` into the first turn of a session. |
 
 `extends` also accepts a relative path or a Node-resolvable specifier
@@ -170,8 +186,14 @@ session down.
 
 Hooks execute arbitrary commands with your permissions, exactly like the extensions
 they are built on. Treat a `hooks.json` from someone else the way you would treat a
-shell script from someone else. The blocking presets are a guardrail against an agent
-making a mistake, not a sandbox against an adversary.
+shell script from someone else — and note that a project-local `.pi/hooks.json` is
+auto-discovered, so cloning a repository and starting Pi in it is enough to adopt
+whatever that file says. `extends` can reach any readable path or resolvable package.
+
+The blocking presets are a guardrail against an agent making a mistake, not a sandbox
+against an adversary: they match command text, and anyone willing to obfuscate a
+command can get past them. Patterns are also compiled and run on Pi's main thread, so
+a catastrophically-backtracking regex in your own config will hang the agent.
 
 ## License
 

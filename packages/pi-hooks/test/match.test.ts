@@ -19,6 +19,21 @@ describe("getPath / setPath", () => {
     setPath(target, "a.b", 1);
     expect(target).toEqual({ a: { b: 1 } });
   });
+
+  it("refuses to walk a prototype-polluting path", () => {
+    // These paths arrive from a `patch-input` action's keys and from whatever JSON
+    // a `command` hook printed — neither is fully trusted, and walking __proto__
+    // would poison Object.prototype for the rest of the Pi process.
+    for (const path of ["__proto__.polluted", "a.constructor.x", "a.prototype.x"]) {
+      expect(() => setPath({}, path, "yes")).toThrow(/unsafe path segment/);
+    }
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("reads through a prototype-polluting path as undefined", () => {
+    expect(getPath({ a: 1 }, "__proto__")).toBeUndefined();
+    expect(getPath({ a: 1 }, "a.constructor.name")).toBeUndefined();
+  });
 });
 
 describe("matchPattern", () => {
@@ -53,8 +68,17 @@ describe("matchPattern", () => {
     expect(matchPattern(undefined, "*")).toBe(false);
   });
 
+  it("falls back to glob matching when a regex-looking pattern will not compile", () => {
+    // `/etc/sys` looks like a regex — trailing segment is all [gimsuy] — but the
+    // duplicate "s" flag makes the constructor throw. Treating it as the literal
+    // path the user obviously meant beats silently never matching.
+    expect(matchPattern("/etc/sys", "/etc/sys")).toBe(true);
+    expect(matchPattern("/proc/sys", "/proc/sys")).toBe(true);
+    expect(matchPattern("/etc/other", "/etc/sys")).toBe(false);
+  });
+
   it("survives a malformed regex instead of throwing", () => {
-    expect(matchPattern("x", "/[unterminated/")).toBe(false);
+    expect(() => matchPattern("x", "/[unterminated/")).not.toThrow();
   });
 });
 

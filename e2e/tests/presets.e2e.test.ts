@@ -7,10 +7,18 @@
  * event stream — including, where it matters, that the side effect really did not
  * happen on disk.
  */
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { type PiRunResult, runPi, toolResults } from "../harness/pi.ts";
+import { HOOKS_PACKAGE_DIR, type PiRunResult, runPi, toolResults } from "../harness/pi.ts";
+
+/** Hook count read from a preset file, so the e2e never hardcodes a stale number. */
+function presetHookCount(name: string): number {
+  const parsed = JSON.parse(
+    readFileSync(join(HOOKS_PACKAGE_DIR, "presets", `${name}.json`), "utf8"),
+  ) as { hooks: unknown[] };
+  return parsed.hooks.length;
+}
 
 function expectCleanRun(result: PiRunResult): void {
   expect(result.exitCode, `pi exited ${result.exitCode}\nSTDERR:\n${result.stderr}`).toBe(0);
@@ -212,10 +220,54 @@ describe("preset:bash-hardening", () => {
   });
 
   it("leaves a command that already sets its own options alone", async () => {
-    const { text } = await withPreset("bash-hardening", "bash", {
-      command: "set -eu\necho already-hardened",
+    // Asserting only that the echo ran would pass whether or not the hook fired.
+    // `set +o` reports the shell's actual option state, so this observes the thing
+    // under test: pipefail must be OFF, because the hook skipped this command.
+    const { text, isError } = await withPreset("bash-hardening", "bash", {
+      command: "set -eu\nset +o | grep pipefail",
     });
-    expect(text).toContain("already-hardened");
+    expect(isError).toBe(false);
+    expect(text).toContain("+o pipefail");
+    expect(text).not.toContain("-o pipefail");
+  });
+});
+
+describe("preset:session-context", () => {
+  it("injects git status into the first turn, via the argv command form", async () => {
+    // The only preset exercising `argv`, `once`, `blockOnFailure: false`, and the
+    // `context` control key together.
+    const result = await runPi({
+      script: [{ type: "text", text: "ok" }],
+      prompt: "what is the repo state?",
+      hooksConfig: { extends: ["preset:session-context"] },
+      files: { "tracked.txt": "hello\n" },
+      setupCommands: [
+        "git init -q",
+        "git config user.email e2e@example.com",
+        "git config user.name e2e",
+        "git add tracked.txt",
+      ],
+    });
+    expectCleanRun(result);
+    // The strongest proof: it reached the model's request payload.
+    const payload = JSON.stringify(result.llm.requests);
+    expect(payload).toContain("Repository state at session start");
+    expect(payload).toContain("tracked.txt");
+  });
+
+  it("stays quiet, and does not block, outside a git repository", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo still-works" } },
+        { type: "text", text: "ok" },
+      ],
+      prompt: "hello",
+      hooksConfig: { extends: ["preset:session-context"] },
+    });
+    expectCleanRun(result);
+    expectNotBlocked(result);
+    expect(toolResults(result)[0]?.text).toContain("still-works");
+    expect(JSON.stringify(result.llm.requests)).not.toContain("Repository state at session start");
   });
 });
 
@@ -240,8 +292,15 @@ describe("stacking presets", () => {
     });
     expectCleanRun(result);
     expect(result.stderr).toContain("stacked presets loaded");
-    // All three presets plus the local hook are live in the same session.
-    expect(result.stderr).toMatch(/\[pi-hooks\] loaded 1[0-9] hook\(s\)/);
+    // All three presets plus the local hook are live in the same session. Asserting
+    // the exact count means a preset quietly losing a hook fails here; the unit
+    // suite pins each preset's own contents.
+    const expected =
+      presetHookCount("secrets") +
+      presetHookCount("git-guard") +
+      presetHookCount("destructive-bash") +
+      1;
+    expect(result.stderr).toContain(`[pi-hooks] loaded ${expected} hook(s)`);
     expect(toolResults(result)[0]?.isError).toBe(true);
   });
 });

@@ -75,8 +75,8 @@ trigger on tool use. Assertions run against Pi's own `--mode json` event stream,
 it matters — against the filesystem, to prove a blocked call had no side effect.
 
 ```bash
-npm test          # 69 unit tests: matching, templating, config, action semantics
-npm run test:e2e  # 42 e2e tests against the real pinned Pi binary
+npm test          # unit: matching, templating, config, action semantics, presets
+npm run test:e2e  # e2e: the real pinned Pi binary, driven end to end
 ```
 
 `AGENTS.md` carries the reasoning and the constraints.

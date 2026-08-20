@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -24,6 +24,11 @@ function write(name: string, body: unknown): string {
 }
 
 describe("stripJsonComments", () => {
+  it("keeps newlines inside block comments so parse errors point at the right line", () => {
+    const stripped = stripJsonComments('{\n/* a\nb\nc */\n"x": }');
+    expect(stripped.split("\n")).toHaveLength(5);
+  });
+
   it("removes line and block comments", () => {
     expect(stripJsonComments('{ // hi\n "a": 1 /* there */ }')).toContain('"a": 1');
     expect(JSON.parse(stripJsonComments('{ // hi\n"a": 1 }'))).toEqual({ a: 1 });
@@ -53,11 +58,25 @@ describe("discoverConfigPaths", () => {
 
   it("finds the project config when it exists", () => {
     const projectDir = join(dir, ".pi");
-    const { mkdirSync } = require("node:fs") as typeof import("node:fs");
     mkdirSync(projectDir);
     writeFileSync(join(projectDir, "hooks.json"), "{}");
     const paths = discoverConfigPaths({ cwd: dir, agentDir: join(dir, "missing-agent"), env: {} });
     expect(paths).toEqual([join(projectDir, "hooks.json")]);
+  });
+
+  it("orders every user-level config before every project-level one", () => {
+    // Regression guard: iterating filenames in the outer loop would put the
+    // project's hooks.json ahead of the user's hooks.jsonc and invert precedence.
+    const agentDir = join(dir, "agent");
+    const projectDir = join(dir, ".pi");
+    mkdirSync(agentDir);
+    mkdirSync(projectDir);
+    writeFileSync(join(agentDir, "hooks.jsonc"), "{}");
+    writeFileSync(join(projectDir, "hooks.json"), "{}");
+    expect(discoverConfigPaths({ cwd: dir, agentDir, env: {} })).toEqual([
+      join(agentDir, "hooks.jsonc"),
+      join(projectDir, "hooks.json"),
+    ]);
   });
 });
 
@@ -170,6 +189,77 @@ describe("loadConfig", () => {
     const config = loadConfig([path]);
     expect(config.errors).toHaveLength(1);
     expect(config.hooks.map((h) => h.definition.name)).toEqual(["good"]);
+  });
+});
+
+describe("malformed config does not disable everything else", () => {
+  it("skips a null hook entry and keeps its neighbours", () => {
+    // Regression: `{"hooks":[null]}` threw out of loadConfig, killed the whole
+    // extension, and left the user with zero guardrails and no [pi-hooks] warning.
+    const path = write("hooks.json", {
+      hooks: [null, { name: "good", on: "tool_call", action: { type: "block" } }],
+    });
+    const config = loadConfig([path]);
+    expect(config.hooks.map((h) => h.definition.name)).toEqual(["good"]);
+    expect(config.errors[0]).toContain("expected a hook object");
+  });
+
+  it("reports a non-array extends instead of iterating a string per character", () => {
+    const path = write("hooks.json", { extends: "preset:secrets", hooks: [] });
+    const config = loadConfig([path]);
+    expect(config.errors).toHaveLength(1);
+    expect(config.errors[0]).toContain('"extends" must be an array');
+  });
+
+  it("reports a non-string extends entry", () => {
+    const path = write("hooks.json", { extends: [5], hooks: [] });
+    expect(loadConfig([path]).errors[0]).toContain('every "extends" entry must be a string');
+  });
+
+  it("rejects a non-string matcher pattern at load time", () => {
+    // Otherwise matchPattern throws `pattern.startsWith is not a function` on Pi's
+    // hot path, and the model receives that as the tool result.
+    const path = write("hooks.json", {
+      hooks: [{ name: "bad", on: "tool_call", match: { tool: 123 }, action: { type: "block" } }],
+    });
+    const config = loadConfig([path]);
+    expect(config.hooks).toHaveLength(0);
+    expect(config.errors[0]).toContain('"match.tool" must be a string');
+  });
+
+  it("rejects a non-string pattern nested in input, all, any, and not", () => {
+    const cases: [string, unknown][] = [
+      ["match.input.path", { input: { path: null } }],
+      ["match.all[0].tool", { all: [{ tool: 1 }] }],
+      ["match.any[0].tool", { any: [{ tool: 1 }] }],
+      ["match.not.tool", { not: { tool: 1 } }],
+    ];
+    for (const [expected, match] of cases) {
+      const errors = validateHook(
+        { on: "tool_call", match, action: { type: "block" } } as never,
+        "x",
+      );
+      expect(errors.join("\n"), expected).toContain(expected);
+    }
+  });
+
+  it("accepts the matcher shapes the docs describe", () => {
+    expect(
+      validateHook(
+        {
+          on: "tool_call",
+          match: {
+            tool: ["write", "edit"],
+            input: { path: ["**/*.ts", "!**/*.test.ts"] },
+            isError: false,
+            not: { input: { command: "/^git status/" } },
+            any: [{ tool: "bash" }, { tool: "read" }],
+          },
+          action: { type: "block" },
+        },
+        "x",
+      ),
+    ).toEqual([]);
   });
 });
 

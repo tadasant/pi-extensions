@@ -7,7 +7,7 @@
  * the published tarball's `dist/cli.js`, loading extensions through Pi's own jiti
  * loader and dispatching through Pi's own event bus.
  */
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -19,7 +19,7 @@ export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", 
 export const HOOKS_PACKAGE_DIR = join(REPO_ROOT, "packages", "pi-hooks");
 export const HOOKS_EXTENSION = join(HOOKS_PACKAGE_DIR, "extensions", "hooks.ts");
 export const STARTER_PACKAGE_DIR = join(REPO_ROOT, "packages", "pi-starter");
-export { PI_VERSION };
+export { PI_CLI_ENTRY, PI_VERSION };
 
 /** One `--mode json` line from Pi's event stream. */
 export interface PiEvent {
@@ -60,6 +60,11 @@ export interface RunPiOptions {
   env?: Record<string, string>;
   /** Extra CLI arguments. */
   args?: string[];
+  /**
+   * Shell commands run in the scratch directory before Pi starts — for tests that
+   * need a real git repository rather than a bare directory.
+   */
+  setupCommands?: string[];
   timeoutMs?: number;
 }
 
@@ -123,6 +128,14 @@ export async function runPi(options: RunPiOptions): Promise<PiRunResult> {
     const target = join(cwd, name);
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, contents);
+  }
+
+  for (const command of options.setupCommands ?? []) {
+    execSync(command, {
+      cwd,
+      stdio: "ignore",
+      env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" },
+    });
   }
 
   const extensions = options.extensions ?? [HOOKS_EXTENSION];

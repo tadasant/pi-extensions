@@ -3,11 +3,13 @@
  * LLM on localhost, and asserts on Pi's own `--mode json` event stream. Nothing in
  * the loop is a stub except the model.
  */
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   HOOKS_PACKAGE_DIR,
+  PI_CLI_ENTRY,
   PI_VERSION,
   type PiRunResult,
   runPi,
@@ -37,8 +39,14 @@ describe("harness", () => {
     expect(result.stderr).toContain("[pi-hooks] loaded");
   });
 
-  it("reports the pinned version from the binary under test", async () => {
-    expect(PI_VERSION).toBe("0.84.2");
+  it("reports the pinned version from the binary itself", () => {
+    // Asserting PI_VERSION against a literal would only compare the pin file to a
+    // constant. Ask the binary that every other test in this file drives.
+    const reported = execFileSync(process.execPath, [PI_CLI_ENTRY, "--version"], {
+      encoding: "utf8",
+      env: { ...process.env, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1" },
+    }).trim();
+    expect(reported).toContain(PI_VERSION);
   });
 
   it("runs real tools when no hook interferes", async () => {
@@ -390,6 +398,121 @@ describe("configuration", () => {
     });
     expectCleanRun(result);
     expect(toolResults(result)[0]?.text).toBe("blocked from PI_HOOKS_CONFIG");
+  });
+});
+
+describe("user_prompt", () => {
+  /*
+   * `user_bash` (Pi's `!command` syntax) is deliberately not covered here: it is an
+   * interactive-editor feature, so it cannot be driven through `--mode json`, and
+   * faking it would mean mocking Pi. Its translation is unit-tested instead.
+   */
+  it("blocks a matching prompt before the agent loop starts", async () => {
+    const result = await runPi({
+      script: [{ type: "text", text: "the model should never be reached" }],
+      prompt: "please do the forbidden thing",
+      hooksConfig: {
+        hooks: [
+          {
+            name: "no-forbidden",
+            on: "user_prompt",
+            match: { prompt: "/forbidden/" },
+            action: { type: "block", reason: "prompt blocked by hook" },
+          },
+        ],
+      },
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).toContain("[pi-hooks] blocked prompt: prompt blocked by hook");
+    // Pi emitted only its session header — `agent_start` never fired, so this is a
+    // real veto rather than a message the model answered and we ignored.
+    expect(result.eventsOfType("agent_start")).toHaveLength(0);
+    expect(result.llm.requests).toHaveLength(0);
+    expect(result.transcriptText()).not.toContain("the model should never be reached");
+  });
+
+  it("lets a non-matching prompt through", async () => {
+    const result = await runPi({
+      script: [{ type: "text", text: "answered normally" }],
+      prompt: "please do the ordinary thing",
+      hooksConfig: {
+        hooks: [
+          {
+            name: "no-forbidden",
+            on: "user_prompt",
+            match: { prompt: "/forbidden/" },
+            action: { type: "block", reason: "should not fire" },
+          },
+        ],
+      },
+    });
+    expectCleanRun(result);
+    expect(result.transcriptText()).toContain("answered normally");
+  });
+});
+
+describe("terminate", () => {
+  it("stops the agent loop when a hook asks to terminate", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "rm -rf /" } },
+        { type: "text", text: "this turn should never be reached" },
+      ],
+      prompt: "do it",
+      hooksConfig: {
+        hooks: [
+          {
+            name: "hard-stop",
+            on: "tool_call",
+            action: { type: "block", reason: "terminating", terminate: true },
+          },
+        ],
+      },
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(toolResults(result)[0]?.isError).toBe(true);
+    // Pi stopped instead of letting the model take another turn.
+    expect(result.transcriptText()).not.toContain("this turn should never be reached");
+  });
+});
+
+describe("resilience", () => {
+  it("keeps the session alive when one hook entry is null", async () => {
+    // Regression: this used to throw out of the config loader, kill the extension,
+    // and leave the user with zero guardrails and no [pi-hooks] warning at all.
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo x" } },
+        { type: "text", text: "ok" },
+      ],
+      prompt: "run it",
+      hooksConfig:
+        '{ "hooks": [ null, { "name": "survivor", "on": "tool_call", "action": { "type": "block", "reason": "the good hook still ran" } } ] }',
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).toContain("expected a hook object");
+    expect(result.stderr).toContain("[pi-hooks] loaded 1 hook(s)");
+    expect(toolResults(result)[0]?.text).toBe("the good hook still ran");
+  });
+
+  it("reports a malformed matcher at startup instead of at tool time", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo x" } },
+        { type: "text", text: "ok" },
+      ],
+      prompt: "run it",
+      hooksConfig: {
+        hooks: [
+          { name: "bad-matcher", on: "tool_call", match: { tool: 7 }, action: { type: "block" } },
+        ],
+      },
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stderr).toContain('"match.tool" must be a string');
+    // The tool ran normally rather than receiving a raw JS TypeError as its result.
+    expect(toolResults(result)[0]?.isError).toBe(false);
+    expect(result.stderr).not.toContain("startsWith is not a function");
   });
 });
 

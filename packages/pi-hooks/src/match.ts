@@ -1,9 +1,27 @@
 import type { HookMatcher, Pattern } from "./types.ts";
 
+/**
+ * Segments that must never appear in a dot path.
+ *
+ * Paths reach here from two places a user does not fully control: a `patch-input`
+ * action's `set` keys, and the `patchInput` keys of whatever JSON a `command` hook
+ * printed on stdout. Walking `__proto__` would let either one mutate
+ * `Object.prototype` for the rest of the Pi process.
+ */
+const UNSAFE_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
+
+function assertSafePath(path: string): string[] {
+  const segments = path.split(".");
+  const unsafe = segments.find((segment) => UNSAFE_SEGMENTS.has(segment));
+  if (unsafe) throw new Error(`refusing to walk unsafe path segment "${unsafe}" in "${path}"`);
+  return segments;
+}
+
 /** Read a dot-path (`"a.b.0.c"`) out of an arbitrary value, or `undefined`. */
 export function getPath(source: unknown, path: string): unknown {
   let current = source;
   for (const segment of path.split(".")) {
+    if (UNSAFE_SEGMENTS.has(segment)) return undefined;
     if (current === null || current === undefined) return undefined;
     if (typeof current !== "object") return undefined;
     current = (current as Record<string, unknown>)[segment];
@@ -11,9 +29,14 @@ export function getPath(source: unknown, path: string): unknown {
   return current;
 }
 
-/** Set a dot-path on an object, creating intermediate plain objects as needed. */
+/**
+ * Set a dot-path on an object, creating intermediate plain objects as needed.
+ *
+ * Throws on a prototype-polluting path. The runner catches it and logs the hook by
+ * name, so a bad patch is loud rather than a mutation nobody sees.
+ */
 export function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
-  const segments = path.split(".");
+  const segments = assertSafePath(path);
   const last = segments.pop();
   if (!last) return;
   let current: Record<string, unknown> = target;
@@ -84,11 +107,14 @@ export function matchPattern(value: unknown, pattern: Pattern): boolean {
   if (text === undefined) return false;
   const asRegex = REGEX_PATTERN.exec(pattern);
   if (asRegex) {
-    // A malformed regex in user config should not take the session down.
     try {
+      // Note: regex patterns are unanchored, unlike globs.
       return new RegExp(asRegex[1] as string, asRegex[2]).test(text);
     } catch {
-      return false;
+      // `/etc/sys` looks like a regex (trailing segment is all [gimsuy]) but is a
+      // path with duplicate "flags", so the constructor throws. Falling through to
+      // glob matching is what the user meant; returning false would mean such a
+      // pattern silently never fires.
     }
   }
   return globToRegExp(pattern).test(text);

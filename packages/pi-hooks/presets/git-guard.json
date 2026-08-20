@@ -7,7 +7,7 @@
       "match": {
         "tool": "bash",
         "input": {
-          "command": "/git\\s+push\\b[^&|;]*(--force(?!-with-lease)|(^|\\s)-f(\\s|$))/"
+          "command": "/git\\s+(-[^\\s]+\\s+([^\\s-][^\\s]*\\s+)?)*push\\b[^&|;\\n]*(--force(?!-with-lease)|(^|\\s)-f(\\s|$))/m"
         }
       },
       "action": {
@@ -22,7 +22,7 @@
       "match": {
         "tool": "bash",
         "input": {
-          "command": "/git\\s+push\\b[^&|;]*\\s(main|master)(\\s|$)/"
+          "command": "/git\\s+(-[^\\s]+\\s+([^\\s-][^\\s]*\\s+)?)*push\\b[^&|;\\n]*\\s(main|master|HEAD)(\\s|$)/m"
         }
       },
       "action": {
@@ -36,7 +36,7 @@
       "match": {
         "tool": "bash",
         "input": {
-          "command": "/git\\s+(reset\\s+--hard|clean\\s+-[a-z]*[fd]|checkout\\s+--\\s+\\.|restore\\s+--staged\\s+--worktree)/"
+          "command": "/git\\s+(-[^\\s]+\\s+([^\\s-][^\\s]*\\s+)?)*(reset\\s+--hard|clean\\s+-[a-z]*[fd]|checkout\\s+--\\s+\\.|restore\\s+--staged\\s+--worktree)/m"
         }
       },
       "action": {

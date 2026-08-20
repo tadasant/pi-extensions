@@ -31,13 +31,13 @@ for the config format.
 }
 ```
 
-Copy it to `.pi/hooks.json` in your project to adopt it:
+To adopt it, write those three lines into `.pi/hooks.json` in your project:
 
 ```bash
-cp "$(pi list --json | jq -r '…')/hooks/recommended.json" .pi/hooks.json
+mkdir -p .pi && cat > .pi/hooks.json <<'JSON'
+{ "extends": ["preset:secrets", "preset:git-guard", "preset:destructive-bash"] }
+JSON
 ```
-
-or just write the three lines yourself — that is the whole file.
 
 Between them, these stop an agent from reading or writing secret material, from
 force-pushing or pushing to `main`, and from `rm -rf`-ing something it should not.
