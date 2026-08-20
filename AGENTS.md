@@ -1,9 +1,14 @@
 # pi-extensions
 
-Hooks and plugins for the **Pi coding agent**, published to npm. Pi ships an extension API
-but no hook or plugin layer on top of it; this repository builds that layer and releases it
-as installable packages so any Pi installation — and any orchestrator driving Pi, Zimmer
-being the one this exists for — can pick it up with `pi install npm:<package>`.
+A **declarative hook layer for the Pi coding agent**, plus a starter bundle of ready-made
+extensions, published to npm as **pi packages** so any Pi installation — and any orchestrator
+driving Pi, Zimmer being the one this exists for — can pick it up with
+`pi install npm:<package>`.
+
+**Get the premise right before you build anything.** Pi already has an extension API *and* a
+package format; it does **not** have hooks. Read [Domain Context](#domain-context) before
+writing code — the single most expensive mistake available here is reimplementing something
+Pi already ships.
 
 **Read this whole file before writing code.** Most of what is non-obvious here is about
 *testing against real Pi* and *what this repo deliberately does not do*.
@@ -22,11 +27,12 @@ pi-extensions/
 ├── LICENSE                 # MIT, matching tadasant/zimmer
 ├── .gitignore              # Node/TypeScript
 ├── packages/               # (planned) One published npm package per directory
-│   ├── hooks/              # (planned) Declarative hook runner for Pi lifecycle events
-│   └── plugins/            # (planned) Plugin format + loader (bundled hooks/commands/prompts)
+│   ├── hooks/              # (planned) The declarative hook runner, as a Pi extension
+│   └── starter/            # (planned) Starter bundle: extensions/, skills/, prompts/ shipped
+│                           #   as a pi package via the conventional directory layout
 ├── e2e/                    # (planned) End-to-end tests that drive a real, pinned Pi CLI
 │   ├── fake-llm/           # (planned) The simulated localhost LLM API
-│   └── fixtures/           # (planned) Sample hooks/plugins exercised by the e2e suite
+│   └── fixtures/           # (planned) Sample hook configs and packages the e2e suite exercises
 └── .github/workflows/      # (planned) CI: build, unit, e2e; and a release job gated on NPM_TOKEN
 ```
 
@@ -40,16 +46,28 @@ from there it can subscribe to lifecycle events (`session_start`, `tool_call`, `
 and friends), register tools with `pi.registerTool()`, register commands with
 `pi.registerCommand()`, drive the TUI, and persist state. A `tool_call` handler can return
 `{ block: true, reason }` to veto a tool call. Extensions are auto-discovered from
-`~/.pi/agent/extensions/` and `.pi/extensions/`, or loaded ad hoc with `pi -e ./path.ts`.
+`~/.pi/agent/extensions/` and `.pi/extensions/`, or loaded ad hoc with `pi -e <spec>` — where
+the spec may be a local file (`./path.ts`), a package directory (`./packages/hooks`), or a
+registry spec (`npm:@foo/bar`, `git:github.com/user/repo`). That last form is the natural seam
+for exercising a package in tests without installing it.
 
-That primitive is powerful but low-level. Two things sit above it that Pi does not provide,
-and that this repo supplies:
+Pi also ships **[pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)**,
+and this is the fact most likely to be missed. A pi package bundles extensions, skills, prompt
+templates, and themes and distributes them over npm or git — declared under a `pi` key in
+`package.json`, or auto-discovered from conventional `extensions/`, `skills/`, `prompts/`, and
+`themes/` directories. `pi install` resolves and version-pins them; `-l` writes to project
+settings (`.pi/settings.json`) that a team commits and shares, and Pi auto-installs anything
+missing on startup once the project is trusted.
 
-- **Hooks** — a *declarative* mapping from lifecycle events to actions, configured rather
-  than coded. The user writes config; a single extension reads it and dispatches. This is the
-  Pi analogue of a Claude Code hook.
-- **Plugins** — a *distribution format*: hooks, commands, and prompts bundled as one
-  versioned, installable unit instead of files pasted into a config directory.
+**So bundling and distribution are already solved. Do not build a plugin format.** What Pi
+genuinely lacks is one thing:
+
+- **Hooks** — a *declarative* mapping from lifecycle events to actions, configured rather than
+  coded. The user writes config; a single extension reads it and dispatches. This is the Pi
+  analogue of a Claude Code hook, and there is no `hooks` concept anywhere in Pi's docs.
+
+Everything else this repo publishes is **content in that existing format**: a starter bundle of
+extensions, skills, and prompts worth having, shipped as an ordinary pi package.
 
 ### What is deliberately out of scope
 
@@ -58,6 +76,8 @@ and that this repo supplies:
   [`tadasant/pi-mcp-adapter`](https://github.com/tadasant/pi-mcp-adapter)). Never re-implement
   MCP here. Do read that repo: it is the best available reference for how a non-trivial Pi
   extension is structured, packaged, and shipped to npm.
+- **A plugin/package format.** Pi packages already are one. Use the documented `pi` manifest
+  key or the convention directories; do not invent a parallel format or a second loader.
 - **Zimmer integration.** Wiring Pi into Zimmer as a runtime is separate work in a separate
   repo. This repo publishes packages; it does not know about Zimmer.
 - **Forking or patching Pi.** Everything here is built *on top of* the public extension API.
@@ -67,8 +87,8 @@ and that this repo supplies:
 ### Prior art to draw on
 
 [`pulsemcp/ai-artifacts`](https://github.com/pulsemcp/ai-artifacts) is the reference for
-*what a good hook or plugin looks like* — the shape, the granularity, the sort of job worth
-automating. Use it for taste and for concrete starter hooks/plugins; it is not an API to copy.
+*what a good hook or bundled artifact looks like* — the shape, the granularity, the sort of job
+worth automating. Use it for taste and for concrete starter content; it is not an API to copy.
 
 ## Testing: e2e against real, pinned Pi
 
@@ -94,9 +114,9 @@ they do not substitute for the e2e suite.
 
 ## Publishing
 
-Packages are published to npm from CI. This requires an `NPM_TOKEN` repository secret that
-**does not exist yet** — no `tadasant/*` repo has one today. Build and test CI must not depend
-on it; only the release path may. If you are blocked because publishing needs that token, say
+Packages are published to npm from CI. This requires an `NPM_TOKEN` repository secret, which is
+not configured on this repository. Build and test CI must not depend on it; only the release
+path may. If you are blocked because publishing needs that token, say
 so plainly and stop — do not attempt to create, obtain, or work around the credential.
 
 ## Core Principles
@@ -128,11 +148,14 @@ something is an implementation detail, do not export it.
 ### Human-approved PRs, feature branches only
 
 Open a PR; never commit to `main` and never merge your own work. (The one exception was this
-repo's initial bootstrap commit, made before `main` existed.)
+repo's bootstrap, pushed straight to `main` because there was nothing to open a PR against
+until `main` existed. That exception is spent — it does not extend to your work.)
 
 ## What NOT to Do
 
 - **Do not implement MCP support here.** That is `pi-mcp-adapter`'s job.
+- **Do not build a plugin or package format.** Pi packages exist and are documented; ship into
+  that format.
 - **Do not use a floating Pi version** (`latest`, a range, "whatever npm gives us") anywhere
   in the test setup.
 - **Do not mock the Pi binary** to make an e2e test pass. If the real binary is hard to drive,
@@ -151,10 +174,16 @@ repo's initial bootstrap commit, made before `main` existed.)
 
 - **Q: The extension API already lets me subscribe to `tool_call`. Isn't that a hook — why
   does this repo exist?**
-  A: That is the *primitive*. The value here is the layer above it: a user configuring
-  behavior declaratively without writing TypeScript, and a way to distribute a bundle of that
-  behavior as a versioned package. If a design collapses back into "write your own extension",
-  it has missed the point.
+  A: That is the *primitive*. The value here is the layer above it: a user configuring behavior
+  declaratively, in config, without writing TypeScript. If a design collapses back into "write
+  your own extension", it has missed the point.
+
+- **Q: The original framing of this repo was "hooks and plugins support, because Pi has
+  neither." Is that right?**
+  A: Half of it. Hooks are genuinely missing. **Plugins are not** — Pi packages already bundle
+  and distribute extensions, skills, prompts, and themes over npm and git, with version
+  pinning and shareable project settings. The framing predates a close reading of
+  `docs/packages.md`. Build the hook layer; ship everything as ordinary pi packages.
 
 - **Q: Can I add CI workflows / packages / tests?**
   A: Yes — that is exactly the follow-on work this scaffold exists for. The scaffold is

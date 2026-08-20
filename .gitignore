@@ -21,7 +21,12 @@ pnpm-debug.log*
 
 # e2e fixtures: the pinned Pi CLI is downloaded, never committed
 .e2e-cache/
-.pi/
+
+# Pi's per-project install dirs are generated; .pi/settings.json and .pi/extensions/
+# are meant to be committed and shared, so do NOT ignore .pi/ wholesale.
+.pi/npm/
+.pi/git/
+.pi/trust.json
 
 # Environment
 .env
