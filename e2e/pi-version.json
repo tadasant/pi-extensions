@@ -1,0 +1,5 @@
+{
+  "comment": "The exact Pi CLI version the e2e suite downloads and drives. Never a range, never 'latest' — a green test against a moving target proves nothing. Bumping this is a deliberate, reviewable change; `npm run check:pin` fails CI if the root devDependency drifts from it.",
+  "package": "@earendil-works/pi-coding-agent",
+  "version": "0.84.2"
+}

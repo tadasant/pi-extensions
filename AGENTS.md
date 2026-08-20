@@ -15,26 +15,50 @@ Pi already ships.
 
 ## Folder Hierarchy
 
-The repo is currently a **scaffold** — the tree below is what exists plus, marked
-`(planned)`, the shape the implementation should grow into. Do not treat the planned entries
-as gospel; if a better layout emerges while building, use it and update this file.
-
 ```
 pi-extensions/
-├── README.md               # Public-facing: what this is, what it publishes, NPM_TOKEN caveat
-├── AGENTS.md               # This file — the agent's operating manual
-├── CLAUDE.md               # Symlink -> AGENTS.md (do not turn this into a real file)
-├── LICENSE                 # MIT, matching tadasant/zimmer
-├── .gitignore              # Node/TypeScript
-├── packages/               # (planned) One published npm package per directory
-│   ├── hooks/              # (planned) The declarative hook runner, as a Pi extension
-│   └── starter/            # (planned) Starter bundle: extensions/, skills/, prompts/ shipped
-│                           #   as a pi package via the conventional directory layout
-├── e2e/                    # (planned) End-to-end tests that drive a real, pinned Pi CLI
-│   ├── fake-llm/           # (planned) The simulated localhost LLM API
-│   └── fixtures/           # (planned) Sample hook configs and packages the e2e suite exercises
-└── .github/workflows/      # (planned) CI: build, unit, e2e; and a release job gated on NPM_TOKEN
+├── README.md                    # Public-facing: what this is, what it publishes, NPM_TOKEN caveat
+├── AGENTS.md                    # This file — the agent's operating manual
+├── CLAUDE.md                    # Symlink -> AGENTS.md (do not turn this into a real file)
+├── LICENSE                      # MIT, matching tadasant/zimmer
+├── package.json                 # npm workspaces root; scripts are the entry point for everything
+├── biome.json                   # Lint + format (one tool, no eslint/prettier pair)
+├── tsconfig.json                # Typecheck only; nothing here is compiled
+├── vitest.config.ts             # Unit tests
+├── vitest.e2e.config.ts         # E2E tests (separate: they need the pinned Pi download)
+├── packages/
+│   ├── pi-hooks/                # @tadasant/pi-hooks — the declarative hook runner
+│   │   ├── extensions/hooks.ts  #   Pi entry point: binds the runner to Pi's event bus
+│   │   ├── src/                 #   Pi-free core: config, matching, templating, actions, runner
+│   │   ├── presets/             #   Curated ready-made hook configs (`extends: ["preset:…"]`)
+│   │   ├── schema/              #   JSON Schema for hooks.json
+│   │   └── test/                #   Unit tests (excluded from the published tarball)
+│   └── pi-starter/              # @tadasant/pi-starter — starter bundle, bundles pi-hooks
+│       ├── hooks/               #   The recommended policy users copy to .pi/hooks.json
+│       ├── skills/              #   Skills, via the conventional pi-package directory
+│       └── prompts/             #   Prompt templates, likewise
+├── e2e/
+│   ├── pi-version.json          # THE PIN. Exact Pi version; bumping it is a visible diff.
+│   ├── fake-llm/server.ts       # The simulated localhost LLM API
+│   ├── harness/                 # Pinned-Pi download check + runPi() subprocess driver
+│   └── tests/                   # hooks / presets / starter e2e suites
+├── scripts/                     # Pin guard, Pi installer, bundle prep, publish dry run
+└── .github/workflows/           # ci.yml (lint, unit, e2e, dry run) + release.yml (NPM_TOKEN)
 ```
+
+**Notes on the layout that are not obvious:**
+
+- **Nothing is compiled.** Pi loads extensions through jiti, so the packages ship raw `.ts`
+  and CI runs `tsc --noEmit`. There is no `dist/`, and adding one would be a regression.
+- **`src/` is deliberately Pi-free.** `runner.ts` takes a normalized event and returns a
+  normalized outcome; `extensions/hooks.ts` does the translation to and from Pi's API. That
+  split is what makes the matching and action semantics unit-testable without booting an agent.
+- **`packages/pi-starter/node_modules/@tadasant/pi-hooks` is generated, not committed.** Pi
+  requires one pi package that ships another to *bundle* it, and npm only bundles what is
+  physically in the package's own `node_modules` at pack time — which workspace hoisting
+  defeats. `scripts/prepare-starter-bundle.mjs` materializes it; it is wired as the starter's
+  `prepack` and run by the e2e global setup. Without it the published starter tarball would
+  point at an extension path that does not exist.
 
 ## Domain Context
 
@@ -186,5 +210,16 @@ until `main` existed. That exception is spent — it does not extend to your wor
   `docs/packages.md`. Build the hook layer; ship everything as ordinary pi packages.
 
 - **Q: Can I add CI workflows / packages / tests?**
-  A: Yes — that is exactly the follow-on work this scaffold exists for. The scaffold is
-  deliberately empty; the bootstrap session was scoped to making the repo exist.
+  A: Yes. The scaffold has been built out — hook layer, presets, starter bundle, pinned-Pi
+  e2e harness, and CI all exist and are green. Extend them.
+
+- **Q: Why does `npm publish --dry-run` need a nested `npm pack` that scrubs the environment?**
+  A: `npm publish --dry-run` exports `npm_config_dry_run=true`, which any nested npm command
+  inherits. The starter's `prepack` packs `pi-hooks` to materialize the bundle, and that
+  nested pack silently wrote no tarball until the variable was scrubbed. If you touch
+  `scripts/prepare-starter-bundle.mjs`, keep that scrub.
+
+- **Q: An e2e test needs to assert "no hook fired". What is the right signal?**
+  A: `expect(result.stderr).not.toContain("[pi-hooks] blocked")`. Asserting the tool result
+  is not an error tests the environment instead — plenty of legitimate commands (anything
+  touching a git remote) fail on their own inside a bare scratch directory.

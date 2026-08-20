@@ -1,0 +1,60 @@
+{
+  "$schema": "../schema/hooks.schema.json",
+  "hooks": [
+    {
+      "name": "block-recursive-delete-of-roots",
+      "on": "tool_call",
+      "match": {
+        "tool": "bash",
+        "input": {
+          "command": "/rm\\s+(-[a-zA-Z]*\\s+)*-?[a-zA-Z]*[rR][a-zA-Z]*[fF][a-zA-Z]*\\s+(\\/|~|\\$HOME|\\/\\*|\\.\\s*$|\\*\\s*$)/"
+        }
+      },
+      "action": {
+        "type": "block",
+        "reason": "pi-hooks/destructive-bash: `{{input.command}}` would recursively delete a root, the home directory, or the whole working tree.",
+        "terminate": true
+      }
+    },
+    {
+      "name": "block-curl-pipe-shell",
+      "on": "tool_call",
+      "match": {
+        "tool": "bash",
+        "input": {
+          "command": "/(curl|wget)\\s[^|]*\\|\\s*(sudo\\s+)?(ba|z|k|)sh\\b/"
+        }
+      },
+      "action": {
+        "type": "block",
+        "reason": "pi-hooks/destructive-bash: piping a download straight into a shell executes unreviewed code. Download it, read it, then run it."
+      }
+    },
+    {
+      "name": "block-sudo",
+      "on": "tool_call",
+      "match": {
+        "tool": "bash",
+        "input": { "command": "/(^|[|;&]\\s*)sudo\\s/" }
+      },
+      "action": {
+        "type": "block",
+        "reason": "pi-hooks/destructive-bash: `sudo` escalates outside the workspace. Ask the user to run this themselves if it is genuinely needed."
+      }
+    },
+    {
+      "name": "block-database-drop",
+      "on": "tool_call",
+      "match": {
+        "tool": "bash",
+        "input": {
+          "command": "/(DROP\\s+(DATABASE|TABLE|SCHEMA)|TRUNCATE\\s+TABLE|db:drop|drop-database)/"
+        }
+      },
+      "action": {
+        "type": "block",
+        "reason": "pi-hooks/destructive-bash: destructive database statements are blocked. Run them yourself against a database you have a backup of."
+      }
+    }
+  ]
+}

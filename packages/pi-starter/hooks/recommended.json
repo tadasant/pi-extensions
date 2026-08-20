@@ -1,0 +1,5 @@
+{
+  "$schema": "https://raw.githubusercontent.com/tadasant/pi-extensions/main/packages/pi-hooks/schema/hooks.schema.json",
+  "extends": ["preset:secrets", "preset:git-guard", "preset:destructive-bash"],
+  "hooks": []
+}

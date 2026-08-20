@@ -1,0 +1,52 @@
+{
+  "name": "@tadasant/pi-hooks",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Declarative hooks for the Pi coding agent: map lifecycle events to actions in JSON, no TypeScript required",
+  "author": "tadasant",
+  "homepage": "https://github.com/tadasant/pi-extensions/tree/main/packages/pi-hooks",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tadasant/pi-extensions.git",
+    "directory": "packages/pi-hooks"
+  },
+  "bugs": {
+    "url": "https://github.com/tadasant/pi-extensions/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "hooks",
+    "extension",
+    "coding-agent"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/hooks.ts"
+    ]
+  },
+  "files": [
+    "extensions",
+    "src",
+    "presets",
+    "schema",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.10"
+  }
+}

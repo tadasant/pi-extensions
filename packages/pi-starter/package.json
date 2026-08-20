@@ -1,0 +1,67 @@
+{
+  "name": "@tadasant/pi-starter",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Starter bundle for the Pi coding agent: the pi-hooks engine plus ready-made safety hooks, skills, and prompt templates",
+  "author": "tadasant",
+  "homepage": "https://github.com/tadasant/pi-extensions/tree/main/packages/pi-starter",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tadasant/pi-extensions.git",
+    "directory": "packages/pi-starter"
+  },
+  "bugs": {
+    "url": "https://github.com/tadasant/pi-extensions/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "hooks",
+    "skills",
+    "prompts",
+    "starter"
+  ],
+  "pi": {
+    "extensions": [
+      "node_modules/@tadasant/pi-hooks/extensions/hooks.ts"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ]
+  },
+  "files": [
+    "skills",
+    "prompts",
+    "hooks",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@tadasant/pi-hooks": "0.1.0"
+  },
+  "bundledDependencies": [
+    "@tadasant/pi-hooks"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.10"
+  },
+  "scripts": {
+    "prepack": "node ../../scripts/prepare-starter-bundle.mjs"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema/hooks.schema.json",
+  "hooks": [
+    {
+      "name": "fail-fast-bash",
+      "on": "tool_call",
+      "match": {
+        "tool": "bash",
+        "not": { "input": { "command": "/(^|\\n)\\s*set\\s+-[eux]/" } }
+      },
+      "action": {
+        "type": "patch-input",
+        "set": { "command": "set -o pipefail\n{{input.command}}" }
+      }
+    }
+  ]
+}
