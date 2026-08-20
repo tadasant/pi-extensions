@@ -1,40 +1,48 @@
 # pi-extensions
 
-**Hooks for the [Pi coding agent](https://github.com/earendil-works/pi), plus a set of ready-made
-extensions**, published to npm as [pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
+**Hooks and [AIR](https://github.com/pulsemcp/air) plugin support for the
+[Pi coding agent](https://github.com/earendil-works/pi)**, published to npm as
+[pi packages](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md)
 so any Pi installation — or any orchestrator that drives Pi — can install them with
 `pi install npm:<package>`.
 
-## What Pi already has, and what it doesn't
+## The two gaps this fills
 
-Pi ships a first-class [extension API](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md):
-a TypeScript module gets an `ExtensionAPI` handle and can subscribe to lifecycle events,
-register tools, and register commands. It also ships a **package format** — extensions,
-skills, prompt templates, and themes bundled and distributed over npm or git, version-pinned,
-installable per-user or per-project. Distribution is a solved problem here, and this repo uses
-it rather than reinventing it.
+Pi ships a first-class [extension API](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md)
+and a [package format](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md).
+Distribution is a solved problem, and this repository uses it rather than reinventing
+it — that package format is *how these packages reach you*. What Pi lacks is two
+things it can consume once someone builds them.
 
-What Pi does **not** ship is a **declarative hook layer**: a way to say "run this command when
-a tool call matches that pattern" in config, without writing a TypeScript extension. Claude
-Code has one; Pi has no equivalent and no `hooks` concept anywhere in its docs. That gap is
-this repository's reason to exist.
+**1. Declarative hooks.** Pi's extension API lets you subscribe to `tool_call` and
+return `{ block: true }` — that is the primitive. There is no way to express a policy
+as configuration rather than as a TypeScript module you write, install, and maintain,
+and the word `hooks` appears nowhere in Pi's docs.
+
+**2. AIR plugins.** [AIR](https://github.com/pulsemcp/air) is a vendor-neutral
+framework for AI artifacts, with six artifact types — skills, references, MCP servers,
+plugins, roots, hooks. An AIR **plugin** is the compositional one: a manifest that
+bundles other artifacts *by ID* rather than a directory of content. It is a different
+artifact type from a different ecosystem, and Pi cannot read it at all. Making Pi able
+to is this repository's second reason to exist — the same role
+`@pulsemcp/air-adapter-opencode` plays for OpenCode.
 
 The sibling concern, MCP, is handled elsewhere: [`nicobailon/pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter)
 (and Tadas's fork, [`tadasant/pi-mcp-adapter`](https://github.com/tadasant/pi-mcp-adapter))
 already gives Pi MCP support as a Pi extension. Nothing in this repo re-implements MCP.
 
-> **Status: implemented, not yet published.** The packages, the test suite, and CI all exist
-> and are green. Publishing to npm is blocked on an `NPM_TOKEN` repository secret that does
-> not exist yet — see [Known prerequisite](#known-prerequisite-npm_token).
+> **Status: implemented, not yet published.** Both packages, the test suite, and CI all
+> exist and are green. Publishing to npm is blocked on an `NPM_TOKEN` repository secret
+> that does not exist yet — see [Known prerequisite](#known-prerequisite-npm_token).
 
 ## What this publishes
 
-Pi packages, installable with `pi install npm:<package>`:
+Exactly two pi packages, installable with `pi install npm:<package>`:
 
 | Package | What it does |
 |---|---|
-| [**`@tadasant/pi-hooks`**](packages/pi-hooks) | A Pi extension implementing a declarative hook runner: `hooks.json` maps Pi lifecycle events (`session_start`, `tool_call`, `tool_result`, …) to actions, with the ability to block a tool call, rewrite its input, rewrite its result, or inject context. The layer Pi's extension API makes possible but does not provide. Ships five curated presets. |
-| [**`@tadasant/pi-starter`**](packages/pi-starter) | A starter bundle: the hooks engine (bundled), a recommended blocking policy, two skills, and two prompt templates. One install gets a working, opinionated setup. |
+| [**`@tadasant/pi-hooks`**](packages/pi-hooks) | A declarative hook runner. `hooks.json` maps Pi lifecycle events (`session_start`, `tool_call`, `tool_result`, …) to actions, with the ability to block a tool call, rewrite its input, rewrite its result, or inject context. Ships five curated presets. |
+| [**`@tadasant/pi-plugins`**](packages/pi-plugins) | The Pi adapter for **AIR plugins**. Resolves an AIR plugin — including composition, `.plugin/plugin.json` manifests, and `default_in_roots` membership — and activates the skills and hooks it bundles inside a Pi session. Bundles the hooks engine, so an AIR hook runs on the same runner rather than a second hook path. |
 
 Each package's README carries its full configuration reference.
 
@@ -59,6 +67,36 @@ Each package's README carries its full configuration reference.
 No TypeScript, no extension to maintain. That is the whole point: Pi's `tool_call`
 subscription is the primitive, and this is the layer above it.
 
+## AIR plugins in one example
+
+Point Pi at an AIR config and the adapter resolves what a plugin bundles:
+
+```json
+// plugins.json — a thin registry
+{
+  "code-quality": {
+    "description": "Repository conventions plus a guardrail against production deploys",
+    "path": "./plugins/code-quality",
+    "default_in_roots": ["*"]
+  }
+}
+```
+
+```json
+// plugins/code-quality/.plugin/plugin.json — the body, referencing artifacts by ID
+{
+  "title": "Code Quality Suite",
+  "version": "1.2.0",
+  "skills": ["repo-conventions"],
+  "mcp_servers": ["eslint-server"],
+  "hooks": ["block-prod-deploy"]
+}
+```
+
+Pi then loads `repo-conventions` as a skill and enforces `block-prod-deploy` as a
+hook. The MCP server is resolved and reported but **not** started — that boundary is
+`pi-mcp-adapter`'s, and `packages/pi-plugins/README.md` explains the seam.
+
 ## Testing philosophy
 
 The test suite that matters here is **end-to-end against real Pi**. E2E tests download a
@@ -75,7 +113,7 @@ trigger on tool use. Assertions run against Pi's own `--mode json` event stream,
 it matters — against the filesystem, to prove a blocked call had no side effect.
 
 ```bash
-npm test          # unit: matching, templating, config, action semantics, presets
+npm test          # unit: hook matching/actions/presets, AIR resolution and translation
 npm run test:e2e  # e2e: the real pinned Pi binary, driven end to end
 ```
 

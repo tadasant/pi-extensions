@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/hooks.schema.json",
+  "block-prod-deploy": {
+    "title": "Block Production Deploys",
+    "description": "Refuse any command that would deploy straight to production",
+    "path": "hooks/block-prod-deploy",
+    "x-config": { "environment": "production" }
+  }
+}

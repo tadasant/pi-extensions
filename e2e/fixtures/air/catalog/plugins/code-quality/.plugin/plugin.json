@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/plugin-manifest.schema.json",
+  "name": "code-quality",
+  "title": "Code Quality Suite",
+  "version": "1.2.0",
+  "skills": ["repo-conventions"],
+  "mcp_servers": ["eslint-server"],
+  "hooks": ["block-prod-deploy"],
+  "author": { "name": "pi-extensions e2e" },
+  "license": "MIT",
+  "keywords": ["linting", "conventions"]
+}

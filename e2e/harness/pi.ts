@@ -8,7 +8,7 @@
  * loader and dispatching through Pi's own event bus.
  */
 import { execSync, spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,9 @@ import { type FakeLlm, type ScriptedTurn, startFakeLlm } from "../fake-llm/serve
 export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 export const HOOKS_PACKAGE_DIR = join(REPO_ROOT, "packages", "pi-hooks");
 export const HOOKS_EXTENSION = join(HOOKS_PACKAGE_DIR, "extensions", "hooks.ts");
-export const STARTER_PACKAGE_DIR = join(REPO_ROOT, "packages", "pi-starter");
+export const PLUGINS_PACKAGE_DIR = join(REPO_ROOT, "packages", "pi-plugins");
+export const PLUGINS_EXTENSION = join(PLUGINS_PACKAGE_DIR, "extensions", "plugins.ts");
+export const AIR_FIXTURE_DIR = join(REPO_ROOT, "e2e", "fixtures", "air");
 export { PI_CLI_ENTRY, PI_VERSION };
 
 /** One `--mode json` line from Pi's event stream. */
@@ -56,6 +58,11 @@ export interface RunPiOptions {
   extensions?: string[];
   /** Extra files seeded into the working directory before Pi starts. */
   files?: Record<string, string>;
+  /**
+   * A directory tree copied into the run's working directory before Pi starts —
+   * used to plant a real AIR catalog that the plugins extension then discovers.
+   */
+  fixtureDir?: string;
   /** Extra environment for the Pi process. */
   env?: Record<string, string>;
   /** Extra CLI arguments. */
@@ -123,6 +130,9 @@ export async function runPi(options: RunPiOptions): Promise<PiRunResult> {
         ? options.hooksConfig
         : JSON.stringify(options.hooksConfig, null, 2),
     );
+  }
+  if (options.fixtureDir) {
+    cpSync(options.fixtureDir, cwd, { recursive: true });
   }
   for (const [name, contents] of Object.entries(options.files ?? {})) {
     const target = join(cwd, name);

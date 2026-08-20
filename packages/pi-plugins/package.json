@@ -1,15 +1,15 @@
 {
-  "name": "@tadasant/pi-starter",
+  "name": "@tadasant/pi-plugins",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "Starter bundle for the Pi coding agent: the pi-hooks engine plus ready-made safety hooks, skills, and prompt templates",
+  "description": "AIR plugin support for the Pi coding agent: resolve an AIR plugin and activate the skills and hooks it bundles inside a Pi session",
   "author": "tadasant",
-  "homepage": "https://github.com/tadasant/pi-extensions/tree/main/packages/pi-starter",
+  "homepage": "https://github.com/tadasant/pi-extensions/tree/main/packages/pi-plugins",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/tadasant/pi-extensions.git",
-    "directory": "packages/pi-starter"
+    "directory": "packages/pi-plugins"
   },
   "bugs": {
     "url": "https://github.com/tadasant/pi-extensions/issues"
@@ -18,29 +18,26 @@
     "pi-package",
     "pi",
     "pi-coding-agent",
-    "hooks",
-    "skills",
-    "prompts",
-    "starter"
+    "air",
+    "ai-artifacts",
+    "plugins",
+    "extension"
   ],
   "pi": {
     "extensions": [
+      "./extensions/plugins.ts",
       "node_modules/@tadasant/pi-hooks/extensions/hooks.ts"
-    ],
-    "skills": [
-      "./skills"
-    ],
-    "prompts": [
-      "./prompts"
     ]
   },
   "files": [
-    "skills",
-    "prompts",
-    "hooks",
+    "extensions",
+    "src",
     "README.md",
     "LICENSE"
   ],
+  "scripts": {
+    "prepack": "node ../../scripts/prepare-bundled-deps.mjs"
+  },
   "dependencies": {
     "@tadasant/pi-hooks": "0.1.0"
   },
@@ -60,8 +57,5 @@
   },
   "engines": {
     "node": ">=20.10"
-  },
-  "scripts": {
-    "prepack": "node ../../scripts/prepare-starter-bundle.mjs"
   }
 }

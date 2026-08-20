@@ -81,4 +81,4 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           npm publish --workspace @tadasant/pi-hooks --provenance --access public
-          npm publish --workspace @tadasant/pi-starter --provenance --access public
+          npm publish --workspace @tadasant/pi-plugins --provenance --access public

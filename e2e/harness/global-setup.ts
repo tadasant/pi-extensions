@@ -5,14 +5,14 @@
  */
 import { execFileSync } from "node:child_process";
 import { installPinnedPi, PI_CLI_ENTRY, PI_VERSION } from "../../scripts/install-pinned-pi.mjs";
-import { prepareStarterBundle } from "../../scripts/prepare-starter-bundle.mjs";
+import { prepareBundledDeps } from "../../scripts/prepare-bundled-deps.mjs";
 
 export default function setup(): void {
   installPinnedPi();
-  // npm hoists workspace dependencies, so the starter's bundled copy of the hooks
+  // npm hoists workspace dependencies, so pi-plugins' bundled copy of the hooks
   // engine only exists once it is materialized. Do it here so the e2e suite drives
   // the same on-disk layout a published tarball produces.
-  prepareStarterBundle();
+  prepareBundledDeps();
   const reported = execFileSync(process.execPath, [PI_CLI_ENTRY, "--version"], {
     encoding: "utf8",
     env: { ...process.env, PI_OFFLINE: "1", PI_SKIP_VERSION_CHECK: "1" },

@@ -1,0 +1,12 @@
+{
+  "event": "pre_tool_call",
+  "matcher": "deploy.*production",
+  "command": "./block.sh",
+  "timeout_seconds": 10,
+  "env": {
+    "AIR_E2E_TOKEN": "${AIR_E2E_TOKEN}"
+  },
+  "x-config": {
+    "severity": "error"
+  }
+}

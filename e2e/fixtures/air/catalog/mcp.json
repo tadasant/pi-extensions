@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/mcp.schema.json",
+  "eslint-server": {
+    "title": "ESLint MCP Server",
+    "description": "Lint diagnostics over MCP",
+    "command": "npx",
+    "args": ["-y", "eslint-mcp-server"]
+  }
+}

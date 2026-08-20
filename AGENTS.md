@@ -1,17 +1,29 @@
 # pi-extensions
 
-A **declarative hook layer for the Pi coding agent**, plus a starter bundle of ready-made
-extensions, published to npm as **pi packages** so any Pi installation — and any orchestrator
-driving Pi, Zimmer being the one this exists for — can pick it up with
+**Hooks and [AIR](https://github.com/pulsemcp/air) plugin support for the Pi coding
+agent**, published to npm as **pi packages** so any Pi installation — and any
+orchestrator driving Pi, Zimmer being the one this exists for — can pick them up with
 `pi install npm:<package>`.
 
-**Get the premise right before you build anything.** Pi already has an extension API *and* a
-package format; it does **not** have hooks. Read [Domain Context](#domain-context) before
-writing code — the single most expensive mistake available here is reimplementing something
-Pi already ships.
+This repository publishes **exactly two packages**: the hooks extension and the
+plugins extension. Nothing else.
 
-**Read this whole file before writing code.** Most of what is non-obvious here is about
-*testing against real Pi* and *what this repo deliberately does not do*.
+**Get the premise right before you build anything.** Two distinct facts, and
+conflating them has already cost this repo one wrong package:
+
+1. **Pi already has an extension API *and* a package format.** It does **not** have
+   declarative hooks. Package 1 fills that gap; the package format is how both
+   packages get *distributed*, not something to reinvent.
+2. **"Plugins" here means AIR plugins, not Pi packages.** An AIR plugin is an
+   artifact type from [`pulsemcp/air`](https://github.com/pulsemcp/air) — a manifest
+   bundling skills, MCP servers, and hooks *by ID*. Pi cannot read it at all. Package
+   2 is the Pi adapter for it. Read the schemas in that repo's `/schemas` directory
+   directly rather than inferring the shape.
+
+Read [Domain Context](#domain-context) before writing code.
+
+**Read this whole file before writing code.** Most of what is non-obvious here is
+about *testing against real Pi* and *what this repo deliberately does not do*.
 
 ## Folder Hierarchy
 
@@ -33,15 +45,16 @@ pi-extensions/
 │   │   ├── presets/             #   Curated ready-made hook configs (`extends: ["preset:…"]`)
 │   │   ├── schema/              #   JSON Schema for hooks.json
 │   │   └── test/                #   Unit tests (excluded from the published tarball)
-│   └── pi-starter/              # @tadasant/pi-starter — starter bundle, bundles pi-hooks
-│       ├── hooks/               #   The recommended policy users copy to .pi/hooks.json
-│       ├── skills/              #   Skills, via the conventional pi-package directory
-│       └── prompts/             #   Prompt templates, likewise
+│   └── pi-plugins/              # @tadasant/pi-plugins — the AIR plugin adapter
+│       ├── extensions/plugins.ts#   Pi entry point: resolves plugins, contributes skills, binds hooks
+│       ├── src/                 #   Pi-free core: catalog, resolve, hooks-bridge, activate
+│       └── test/                #   Unit tests
 ├── e2e/
 │   ├── pi-version.json          # THE PIN. Exact Pi version; bumping it is a visible diff.
 │   ├── fake-llm/server.ts       # The simulated localhost LLM API
+│   ├── fixtures/air/            # A real AIR catalog the plugins e2e suite plants and resolves
 │   ├── harness/                 # Pinned-Pi download check + runPi() subprocess driver
-│   └── tests/                   # hooks / presets / starter e2e suites
+│   └── tests/                   # hooks / presets / plugins e2e suites
 ├── scripts/                     # Pin guard, Pi installer, bundle prep, publish dry run
 └── .github/workflows/           # ci.yml (lint, unit, e2e, dry run) + release.yml (NPM_TOKEN)
 ```
@@ -53,12 +66,15 @@ pi-extensions/
 - **`src/` is deliberately Pi-free.** `runner.ts` takes a normalized event and returns a
   normalized outcome; `extensions/hooks.ts` does the translation to and from Pi's API. That
   split is what makes the matching and action semantics unit-testable without booting an agent.
-- **`packages/pi-starter/node_modules/@tadasant/pi-hooks` is generated, not committed.** Pi
+- **`packages/pi-plugins/node_modules/@tadasant/pi-hooks` is generated, not committed.** Pi
   requires one pi package that ships another to *bundle* it, and npm only bundles what is
   physically in the package's own `node_modules` at pack time — which workspace hoisting
-  defeats. `scripts/prepare-starter-bundle.mjs` materializes it; it is wired as the starter's
-  `prepack` and run by the e2e global setup. Without it the published starter tarball would
-  point at an extension path that does not exist.
+  defeats. `scripts/prepare-bundled-deps.mjs` materializes it; it is wired as pi-plugins'
+  `prepack` and run by the e2e global setup. Without it the published tarball would point
+  at an extension path that does not exist.
+- **An AIR hook does not get its own runner.** `src/hooks-bridge.ts` translates a
+  `HOOK.json` into a `@tadasant/pi-hooks` definition, and `extensions/plugins.ts` drives
+  the same `HookRunner`. Building a second hook path here would be a regression.
 
 ## Domain Context
 
@@ -83,15 +99,43 @@ templates, and themes and distributes them over npm or git — declared under a 
 settings (`.pi/settings.json`) that a team commits and shares, and Pi auto-installs anything
 missing on startup once the project is trusted.
 
-**So bundling and distribution are already solved. Do not build a plugin format.** What Pi
-genuinely lacks is one thing:
+**So bundling and distribution of *Pi extensions* are already solved. Use that format; do
+not invent a second one.** What Pi genuinely lacks is two things, and this repo publishes
+exactly one package for each.
 
 - **Hooks** — a *declarative* mapping from lifecycle events to actions, configured rather than
   coded. The user writes config; a single extension reads it and dispatches. This is the Pi
   analogue of a Claude Code hook, and there is no `hooks` concept anywhere in Pi's docs.
+  → `@tadasant/pi-hooks`.
 
-Everything else this repo publishes is **content in that existing format**: a starter bundle of
-extensions, skills, and prompts worth having, shipped as an ordinary pi package.
+- **AIR plugins** — see below. → `@tadasant/pi-plugins`.
+
+### AIR, and what "plugin" means here
+
+[**AIR**](https://github.com/pulsemcp/air) is a vendor-neutral framework for AI artifacts.
+It defines six artifact types — **skills, references, MCP servers, plugins, roots, hooks** —
+each declared in a per-type index file (`skills.json`, `hooks.json`, `plugins.json`, …) inside
+a *catalog*, with a root `air.json` naming the catalogs. Every artifact is canonically
+addressed as `@scope/id`; local filesystem catalogs use scope `local`.
+
+**An AIR plugin is the compositional artifact type**: a manifest that bundles *other
+artifacts by ID* rather than a directory of content. The body lives at
+`<plugin-dir>/.plugin/plugin.json` with `skills[]`, `mcp_servers[]`, `hooks[]`, and
+`plugins[]` (plugins can compose plugins), while the `plugins.json` entry stays a thin
+registry of `description` + `path` + `default_in_roots`. Inline fields on the entry win over
+the manifest.
+
+**This is not Pi's package format and has nothing to do with it.** Pi packages distribute Pi
+extensions; AIR plugins are artifacts from a different ecosystem that Pi cannot read at all.
+`@tadasant/pi-plugins` is the *adapter* — the same role `@pulsemcp/air-adapter-opencode` plays
+for OpenCode.
+
+**Read the schemas, do not infer them.** They are at
+[`pulsemcp/air/schemas`](https://github.com/pulsemcp/air/tree/main/schemas) —
+`plugin-manifest.schema.json`, `plugins.schema.json`, `hooks.schema.json`,
+`skills.schema.json`, `air.schema.json` — with prose in that repo's `docs/plugins.md` and
+`docs/hooks.md`. [`pulsemcp/ai-artifacts`](https://github.com/pulsemcp/ai-artifacts) is a
+populated catalog worth reading for real-world examples.
 
 ### What is deliberately out of scope
 
@@ -100,8 +144,15 @@ extensions, skills, and prompts worth having, shipped as an ordinary pi package.
   [`tadasant/pi-mcp-adapter`](https://github.com/tadasant/pi-mcp-adapter)). Never re-implement
   MCP here. Do read that repo: it is the best available reference for how a non-trivial Pi
   extension is structured, packaged, and shipped to npm.
-- **A plugin/package format.** Pi packages already are one. Use the documented `pi` manifest
+- **A *Pi* package format.** Pi packages already are one. Use the documented `pi` manifest
   key or the convention directories; do not invent a parallel format or a second loader.
+  (This does **not** apply to AIR plugins, which are a different artifact type from a
+  different ecosystem — consuming them is the whole point of `@tadasant/pi-plugins`.)
+- **A starter bundle.** An earlier revision of this repo shipped one. It was explicitly
+  rejected. Two packages, no more.
+- **Implementing MCP inside the plugins adapter.** An AIR plugin can bundle MCP servers;
+  the adapter resolves and *reports* them and stops there. Starting them is
+  `pi-mcp-adapter`'s job.
 - **Zimmer integration.** Wiring Pi into Zimmer as a runtime is separate work in a separate
   repo. This repo publishes packages; it does not know about Zimmer.
 - **Forking or patching Pi.** Everything here is built *on top of* the public extension API.
@@ -110,9 +161,10 @@ extensions, skills, and prompts worth having, shipped as an ordinary pi package.
 
 ### Prior art to draw on
 
-[`pulsemcp/ai-artifacts`](https://github.com/pulsemcp/ai-artifacts) is the reference for
-*what a good hook or bundled artifact looks like* — the shape, the granularity, the sort of job
-worth automating. Use it for taste and for concrete starter content; it is not an API to copy.
+[`pulsemcp/ai-artifacts`](https://github.com/pulsemcp/ai-artifacts) is a populated AIR
+catalog: the reference for *what a real plugin, skill, or hook looks like* — the shape, the
+granularity, the sort of job worth automating. Read it alongside the schemas in
+[`pulsemcp/air`](https://github.com/pulsemcp/air), which are normative.
 
 ## Testing: e2e against real, pinned Pi
 
@@ -204,20 +256,21 @@ until `main` existed. That exception is spent — it does not extend to your wor
 
 - **Q: The original framing of this repo was "hooks and plugins support, because Pi has
   neither." Is that right?**
-  A: Half of it. Hooks are genuinely missing. **Plugins are not** — Pi packages already bundle
-  and distribute extensions, skills, prompts, and themes over npm and git, with version
-  pinning and shareable project settings. The framing predates a close reading of
-  `docs/packages.md`. Build the hook layer; ship everything as ordinary pi packages.
+  A: Yes, but "plugins" means **AIR plugins**, not Pi packages. A previous revision read it
+  as Pi's package format, concluded plugins were already solved, and shipped a starter
+  bundle instead — which was wrong and was removed. Pi packages solve *distribution of Pi
+  extensions*; AIR plugins are a different artifact type Pi cannot consume. Both gaps are
+  real, and this repo fills both.
 
 - **Q: Can I add CI workflows / packages / tests?**
-  A: Yes. The scaffold has been built out — hook layer, presets, starter bundle, pinned-Pi
-  e2e harness, and CI all exist and are green. Extend them.
+  A: Yes. The scaffold has been built out — hook layer, presets, AIR plugin adapter,
+  pinned-Pi e2e harness, and CI all exist and are green. Extend them.
 
 - **Q: Why does `npm publish --dry-run` need a nested `npm pack` that scrubs the environment?**
   A: `npm publish --dry-run` exports `npm_config_dry_run=true`, which any nested npm command
-  inherits. The starter's `prepack` packs `pi-hooks` to materialize the bundle, and that
+  inherits. pi-plugins' `prepack` packs `pi-hooks` to materialize the bundle, and that
   nested pack silently wrote no tarball until the variable was scrubbed. If you touch
-  `scripts/prepare-starter-bundle.mjs`, keep that scrub.
+  `scripts/prepare-bundled-deps.mjs`, keep that scrub.
 
 - **Q: I am adding an action that writes into the tool input. Anything to know?**
   A: Route it through `setPath`, which refuses `__proto__`/`constructor`/`prototype`
