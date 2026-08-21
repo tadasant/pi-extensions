@@ -75,6 +75,9 @@ export default function piPlugins(pi: ExtensionAPI): void {
   const runner = new HookRunner(toHooksConfig(activation), { cwd: process.cwd(), log });
 
   const reload = (cwd: string): void => {
+    // Keep the runner's cwd in step, or hook templates report the startup directory
+    // after a /resume into another project.
+    runner.setCwd(cwd);
     try {
       activation = activate({ cwd, materializeMcp: true });
     } catch (error) {
@@ -153,6 +156,12 @@ export default function piPlugins(pi: ExtensionAPI): void {
       flushNotifications(outcome, ctx);
       if (!outcome.blocked) return { action: "continue" } as const;
       log(`[pi-plugins] blocked prompt: ${outcome.reason ?? "(no reason given)"}`);
+      try {
+        // Without this the prompt just vanishes: stderr is invisible in the TUI.
+        ctx.ui?.notify?.(outcome.reason ?? "Prompt blocked by an AIR plugin hook", "error");
+      } catch {
+        // Non-interactive mode has no UI to notify.
+      }
       return { action: "handled" } as const;
     }),
   );

@@ -67,6 +67,12 @@ export function activate(options: ActivateOptions): ActivationResult {
     explicit,
   });
 
+  // Two plugins may bundle the same hook or server. Without a global guard the hook
+  // would run twice per event and the server would be launched twice under two
+  // names — the dedup AIR's ID-reference model exists to make possible.
+  const activatedHooks = new Set<string>();
+  const activatedServers = new Set<string>();
+
   for (const pluginId of selection) {
     let resolved: ResolvedPlugin;
     try {
@@ -78,8 +84,8 @@ export function activate(options: ActivateOptions): ActivationResult {
     }
     result.plugins.push(resolved);
     collectSkills(catalog, resolved, result);
-    collectHooks(catalog, resolved, result, env);
-    collectMcpServers(catalog, resolved, result);
+    collectHooks(catalog, resolved, result, env, activatedHooks);
+    collectMcpServers(catalog, resolved, result, activatedServers);
   }
 
   result.skillPaths = [...new Set(result.skillPaths)];
@@ -87,10 +93,16 @@ export function activate(options: ActivateOptions): ActivationResult {
   if (options.materializeMcp) {
     const materialized = materializeMcpConfig(options.cwd, result.mcpServers, env);
     result.mcp = materialized;
+    if (materialized.unparseable) {
+      result.warnings.push(
+        `${materialized.path} could not be parsed (${materialized.unparseable}), so no MCP ` +
+          "server was written; fix or remove that file and reload",
+      );
+    }
     for (const { id, key } of materialized.renamed) {
       result.warnings.push(
-        `MCP server ${id} was written as "${key}" because a hand-written entry in ` +
-          `${materialized.path} already uses its natural name`,
+        `MCP server ${id} was written as "${key}" because an existing entry in a config ` +
+          "pi-mcp-adapter reads already uses its natural name",
       );
     }
     // Only complain when a plugin actually bundles MCP servers; a hooks-and-skills
@@ -99,7 +111,12 @@ export function activate(options: ActivateOptions): ActivationResult {
       const adapter = findMcpAdapter({ cwd: options.cwd, env });
       result.mcpAdapter = adapter;
       if (!adapter) {
-        result.warnings.push(missingAdapterMessage(result.mcpServers.map((s) => s.id)));
+        result.warnings.push(
+          missingAdapterMessage(
+            result.mcpServers.map((server) => server.id),
+            !materialized.unparseable,
+          ),
+        );
       }
     }
   }
@@ -135,8 +152,11 @@ function collectHooks(
   plugin: ResolvedPlugin,
   out: ActivationResult,
   env: NodeJS.ProcessEnv,
+  activated: Set<string>,
 ): void {
   for (const hookId of plugin.hooks) {
+    if (activated.has(hookId)) continue;
+    activated.add(hookId);
     const artifact = catalog.hooks.get(hookId);
     if (!artifact) {
       out.warnings.push(`plugin ${plugin.id}: bundled hook ${hookId} is not in any hooks index`);
@@ -160,8 +180,15 @@ function collectHooks(
  * here is explicitly out of scope. Surfacing the resolved entries is the seam: an
  * MCP-capable extension can read them and do the actual wiring.
  */
-function collectMcpServers(catalog: Catalog, plugin: ResolvedPlugin, out: ActivationResult): void {
+function collectMcpServers(
+  catalog: Catalog,
+  plugin: ResolvedPlugin,
+  out: ActivationResult,
+  activated: Set<string>,
+): void {
   for (const serverId of plugin.mcpServers) {
+    if (activated.has(serverId)) continue;
+    activated.add(serverId);
     const artifact = catalog.mcp.get(serverId) as Artifact<McpEntry> | undefined;
     if (!artifact) {
       out.warnings.push(

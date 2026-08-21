@@ -53,13 +53,15 @@ describe("translateServer", () => {
     expect(out).toEqual({ command: "x" });
   });
 
-  it("interpolates ${VAR} in command, args, env, url, and headers", () => {
+  it("expands ${VAR} only in the fields pi-mcp-adapter does not expand itself", () => {
+    // command/args/url are ours to resolve; env and headers are the adapter's, and
+    // resolving them here would write a plaintext secret into a project file.
     const out = translateServer(
       {
         description: "d",
         type: "stdio",
         command: "${BIN}",
-        args: ["--token=${TOKEN}"],
+        args: ["--flag=${TOKEN}"],
         env: { KEY: "${TOKEN}" },
         headers: { Authorization: "Bearer ${TOKEN}" },
         url: "https://${HOST}/mcp",
@@ -67,10 +69,26 @@ describe("translateServer", () => {
       { BIN: "/usr/bin/srv", TOKEN: "s3cret", HOST: "example.test" },
     );
     expect(out.command).toBe("/usr/bin/srv");
-    expect(out.args).toEqual(["--token=s3cret"]);
-    expect(out.env).toEqual({ KEY: "s3cret" });
+    expect(out.args).toEqual(["--flag=s3cret"]);
     expect(out.url).toBe("https://example.test/mcp");
-    expect(out.headers).toEqual({ Authorization: "Bearer s3cret" });
+    expect(out.env).toEqual({ KEY: "${TOKEN}" });
+    expect(out.headers).toEqual({ Authorization: "Bearer ${TOKEN}" });
+  });
+
+  it("never writes a resolved secret to disk", () => {
+    materializeMcpConfig(
+      dir,
+      [
+        {
+          id: "@local/gh",
+          entry: { description: "d", command: "npx", env: { GITHUB_TOKEN: "${GH_TOKEN}" } },
+        },
+      ],
+      { GH_TOKEN: "ghp_supersecret" },
+    );
+    const raw = readFileSync(join(dir, ".pi", "mcp.json"), "utf8");
+    expect(raw).not.toContain("ghp_supersecret");
+    expect(raw).toContain("${GH_TOKEN}");
   });
 
   it("maps AIR oauth onto the adapter's oauth block and flags auth", () => {
@@ -84,7 +102,8 @@ describe("translateServer", () => {
       { SECRET: "shh" },
     );
     expect(out.auth).toBe("oauth");
-    expect(out.oauth).toEqual({ clientId: "abc", scopes: ["read"], clientSecret: "shh" });
+    // The secret stays a reference, for the same reason as env and headers.
+    expect(out.oauth).toEqual({ clientId: "abc", scopes: ["read"], clientSecret: "${SECRET}" });
   });
 });
 

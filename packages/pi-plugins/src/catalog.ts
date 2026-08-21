@@ -69,7 +69,9 @@ function findIndexFiles(root: string, depth = 0): string[] {
   }
   const found: string[] = [];
   for (const name of entries) {
-    if (name === "node_modules" || name.startsWith(".git")) continue;
+    // `.pi` holds Pi's own state — including the mcp.json this package writes, whose
+    // top-level keys would otherwise be ingested as bogus artifacts.
+    if (name === "node_modules" || name === ".pi" || name.startsWith(".git")) continue;
     const full = join(root, name);
     let isDir = false;
     try {

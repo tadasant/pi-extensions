@@ -88,9 +88,13 @@ export function resolvePlugin(catalog: Catalog, pluginId: string): ResolvedPlugi
     if (!artifact) throw new AirError(`unknown plugin ${id}`);
     const entry = materializeEntry(artifact);
 
-    // Depth-first: children first, so a parent's own declarations land last and
-    // "parent overrides children" falls out of insertion order.
-    const inherited = { skills: [] as string[], mcp: [] as string[], hooks: [] as string[] };
+    // Depth-first: children first, then the parent's own declarations. Dedup keeps
+    // the first occurrence, which is AIR's documented expansion order.
+    const inherited: { skills: string[]; mcp: string[]; hooks: string[] } = {
+      skills: [],
+      mcp: [],
+      hooks: [],
+    };
     for (const childRef of entry.plugins ?? []) {
       const childId = qualifyRef(childRef, artifact.scope);
       if (!seen.has(childId)) {
@@ -149,7 +153,13 @@ export function selectPlugins(
   options: { root?: string; explicit?: string[] },
 ): string[] {
   if (options.explicit && options.explicit.length > 0) {
-    return options.explicit.map((ref) => (ref.startsWith("@") ? ref : qualify("local", ref)));
+    // A bare name is resolved against whatever scopes the catalog actually holds,
+    // rather than assuming `local`.
+    return options.explicit.map((ref) => {
+      if (ref.startsWith("@")) return ref;
+      const match = [...catalog.plugins.values()].find((entry) => entry.shortId === ref);
+      return match?.id ?? qualify("local", ref);
+    });
   }
   const selected: string[] = [];
   for (const [id, artifact] of catalog.plugins) {

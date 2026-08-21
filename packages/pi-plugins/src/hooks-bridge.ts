@@ -120,6 +120,21 @@ export function mergeXConfig(
   return out;
 }
 
+/** Recursively interpolate `${VAR}` in every string leaf of a JSON-ish value. */
+export function interpolateDeep(value: unknown, env: NodeJS.ProcessEnv): unknown {
+  if (typeof value === "string") return interpolate(value, env);
+  if (Array.isArray(value)) return value.map((item) => interpolateDeep(item, env));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => [
+        key,
+        interpolateDeep(nested, env),
+      ]),
+    );
+  }
+  return value;
+}
+
 /** `${VAR}` interpolation against the environment, as AIR's secrets transforms do. */
 export function interpolate(value: string, env: NodeJS.ProcessEnv): string {
   return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (whole, name: string) => {
@@ -130,6 +145,49 @@ export function interpolate(value: string, env: NodeJS.ProcessEnv): string {
 
 export interface TranslateOptions {
   env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Claude Code tool names mapped onto Pi's.
+ *
+ * This bridge accepts Claude's PascalCase *events*, so it will be handed
+ * Claude-authored hooks whose `matcher` is a Claude tool name. Without this table
+ * `"Bash"` would never match Pi's `bash` and the hook would silently never fire —
+ * the failure `UNSUPPORTED_EVENTS` exists to prevent.
+ */
+const TOOL_ALIASES: Record<string, string> = {
+  Bash: "bash",
+  Read: "read",
+  Write: "write",
+  Edit: "edit",
+  Glob: "find",
+  Grep: "grep",
+  LS: "ls",
+};
+
+/**
+ * Translate an AIR `matcher` into a pi-hooks matcher scoped to the event.
+ *
+ * AIR filters "against event data", which differs per event. Matching every field on
+ * every event means a guardrail written for bash can veto an unrelated file write
+ * whose path merely contains the word.
+ */
+export function buildMatch(matcher: string | undefined, piEvent: string): unknown {
+  if (matcher === undefined) return undefined;
+  const pattern = `/${matcher}/i`;
+  if (piEvent === "user_prompt") return { prompt: pattern };
+  if (piEvent === "tool_call" || piEvent === "tool_result") {
+    const aliased = TOOL_ALIASES[matcher];
+    return {
+      any: [
+        { tool: pattern },
+        ...(aliased ? [{ tool: aliased }] : []),
+        { input: { command: pattern } },
+      ],
+    };
+  }
+  // session_start / session_shutdown / agent_settled carry no matchable payload.
+  return undefined;
 }
 
 /**
@@ -160,23 +218,12 @@ export function translateHook(
   for (const [key, value] of Object.entries(definition.env ?? {})) {
     hookEnv[key] = interpolate(String(value), env);
   }
-  if (xConfig) hookEnv.AIR_HOOK_CONFIG = JSON.stringify(xConfig);
+  // hooks.schema.json: x-config values support ${VAR} interpolation. This lands in an
+  // environment variable handed to the hook process, not on disk.
+  if (xConfig) hookEnv.AIR_HOOK_CONFIG = JSON.stringify(interpolateDeep(xConfig, env));
   hookEnv.AIR_HOOK_ID = artifact.id;
 
-  // AIR's `matcher` is a regex filtered against event data. Pi's tool events carry
-  // the tool name and its arguments, so match the command for bash-shaped calls and
-  // the tool name otherwise — expressed with pi-hooks' `any` combinator.
-  const match =
-    definition.matcher === undefined
-      ? undefined
-      : {
-          any: [
-            { tool: `/${definition.matcher}/` },
-            { input: { command: `/${definition.matcher}/` } },
-            { input: { path: `/${definition.matcher}/` } },
-            { prompt: `/${definition.matcher}/` },
-          ],
-        };
+  const match = buildMatch(definition.matcher, piEvent);
 
   return {
     airId: artifact.id,
@@ -187,11 +234,16 @@ export function translateHook(
       ...(match ? { match } : {}),
       action: {
         type: "command",
-        // argv form: no shell, so an AIR hook's args are passed through verbatim.
-        argv: [definition.command, ...(definition.args ?? [])],
+        // AIR documents `command` as "Shell command to execute". With no `args` it may
+        // therefore contain shell syntax (`foo && bar`), so it runs through a shell.
+        // When `args` are present the pair is argv-shaped and passes through verbatim,
+        // which also keeps arguments free of quoting hazards.
+        ...(definition.args && definition.args.length > 0
+          ? { argv: [definition.command, ...definition.args] }
+          : { command: definition.command }),
         cwd: dir,
         env: hookEnv,
-        ...(definition.timeout_seconds
+        ...(typeof definition.timeout_seconds === "number" && definition.timeout_seconds > 0
           ? { timeoutMs: Math.round(definition.timeout_seconds * 1000) }
           : {}),
       },

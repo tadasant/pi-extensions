@@ -59,7 +59,25 @@ function flushNotifications(outcome: HookOutcome, ctx: ExtensionContext): void {
   }
 }
 
+/**
+ * Pi loads packages with separate module roots, so a user who installs both
+ * `@tadasant/pi-hooks` and `@tadasant/pi-plugins` (which bundles it) gets this file
+ * loaded twice — two runners over one hooks.json, every command spawned twice.
+ * A process-global marker makes the second load a no-op instead.
+ */
+const ALREADY_LOADED = Symbol.for("@tadasant/pi-hooks.loaded");
+
 export default function piHooks(pi: ExtensionAPI): void {
+  const globals = globalThis as Record<symbol, unknown>;
+  if (globals[ALREADY_LOADED]) {
+    log(
+      "[pi-hooks] already loaded in this process (installed both standalone and via " +
+        "@tadasant/pi-plugins?); skipping the duplicate to avoid running every hook twice",
+    );
+    return;
+  }
+  globals[ALREADY_LOADED] = true;
+
   let config: LoadedConfig = { hooks: [], sources: [], errors: [] };
   const runner = new HookRunner(config, { cwd: process.cwd(), log });
 

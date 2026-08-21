@@ -16,7 +16,7 @@ import {
   translateHook,
   UNSUPPORTED_EVENTS,
 } from "../src/hooks-bridge.ts";
-import type { Artifact, HookEntry } from "../src/types.ts";
+import type { Artifact, HookEntry, TranslatedHook } from "../src/types.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -40,13 +40,20 @@ function hookArtifact(definition: unknown, entry: Partial<HookEntry> = {}): Arti
   };
 }
 
+/** The translated matcher, asserting the hook translated at all. */
+function matchOf(translated: TranslatedHook | undefined): unknown {
+  expect(translated).toBeDefined();
+  return (translated?.definition as PiHookShape | undefined)?.match;
+}
+
 interface PiHookShape {
   name: string;
   on: string;
   match?: unknown;
   action: {
     type: string;
-    argv: string[];
+    command?: string;
+    argv?: string[];
     cwd: string;
     env: Record<string, string>;
     timeoutMs?: number;
@@ -96,7 +103,7 @@ describe("event mapping", () => {
 });
 
 describe("HOOK.json translation", () => {
-  it("becomes a pi-hooks command action in argv form", () => {
+  it("uses argv when the hook declares args", () => {
     const warnings: string[] = [];
     const translated = translateHook(
       hookArtifact({
@@ -111,10 +118,21 @@ describe("HOOK.json translation", () => {
     expect(warnings).toEqual([]);
     expect(definition.on).toBe("tool_call");
     expect(definition.name).toBe("@local/sample");
-    // argv, not a shell string: an AIR hook's args pass through verbatim.
     expect(definition.action.argv).toEqual(["npx", "lint-staged"]);
     expect(definition.action.timeoutMs).toBe(30_000);
     expect(definition.action.cwd).toBe(join(dir, "hooks", "sample"));
+  });
+
+  it("runs a bare command through a shell, because AIR calls it a shell command", () => {
+    // `docs/hooks.md`: "command — Shell command to execute". An argv-only form turns
+    // a spec-valid `foo && bar` into a spawn ENOENT that blocks every tool call.
+    const translated = translateHook(
+      hookArtifact({ event: "pre_tool_call", command: "echo checking && exit 0" }),
+      [],
+    );
+    const definition = translated?.definition as PiHookShape;
+    expect(definition.action.command).toBe("echo checking && exit 0");
+    expect(definition.action.argv).toBeUndefined();
   });
 
   it("runs the hook from its own directory, so ./script.sh resolves", () => {
@@ -123,24 +141,40 @@ describe("HOOK.json translation", () => {
       [],
     );
     const definition = translated?.definition as PiHookShape;
-    expect(definition.action.argv).toEqual(["./notify.sh"]);
+    expect(definition.action.command).toBe("./notify.sh");
     expect(definition.action.cwd).toBe(join(dir, "hooks", "sample"));
   });
 
-  it("turns an AIR matcher into a pi-hooks matcher over the fields Pi exposes", () => {
+  it("scopes an AIR matcher to the fields the event actually carries", () => {
+    // Matching every field on every event lets a guardrail written for bash veto an
+    // unrelated write whose path merely contains the word.
     const translated = translateHook(
       hookArtifact({ event: "pre_tool_call", matcher: "deploy.*production", command: "./x.sh" }),
       [],
     );
-    const definition = translated?.definition as PiHookShape;
-    expect(definition.match).toEqual({
-      any: [
-        { tool: "/deploy.*production/" },
-        { input: { command: "/deploy.*production/" } },
-        { input: { path: "/deploy.*production/" } },
-        { prompt: "/deploy.*production/" },
-      ],
+    expect(matchOf(translated)).toEqual({
+      any: [{ tool: "/deploy.*production/i" }, { input: { command: "/deploy.*production/i" } }],
     });
+  });
+
+  it("matches Claude Code tool names, whose events this bridge already accepts", () => {
+    // A Claude-authored hook's matcher is a PascalCase tool name; without an alias it
+    // would never match Pi's lowercase names and would silently never fire.
+    const translated = translateHook(
+      hookArtifact({ event: "PreToolUse", matcher: "Bash", command: "./x.sh" }),
+      [],
+    );
+    const match = matchOf(translated) as { any: unknown[] };
+    expect(match.any).toContainEqual({ tool: "bash" });
+    expect(match.any).toContainEqual({ tool: "/Bash/i" });
+  });
+
+  it("matches the prompt, and only the prompt, on user_prompt_submit", () => {
+    const translated = translateHook(
+      hookArtifact({ event: "user_prompt_submit", matcher: "deploy", command: "./x.sh" }),
+      [],
+    );
+    expect(matchOf(translated)).toEqual({ prompt: "/deploy/i" });
   });
 
   it("omits the matcher entirely when the hook does not declare one", () => {

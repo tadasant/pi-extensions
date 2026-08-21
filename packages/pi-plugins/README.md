@@ -94,12 +94,21 @@ extension-visible notification event, and `pi-hooks` does not currently expose
 compaction. A hook using one of those loads with a named warning rather than
 silently never firing — visible on stderr and in `/plugins`.
 
-An AIR `matcher` becomes a pi-hooks matcher over the fields Pi actually exposes (tool
-name, `input.command`, `input.path`, prompt text). `command`/`args` become a pi-hooks
-`argv` action run from the hook's own directory, so a relative `./notify.sh` resolves;
-`env` values get `${VAR}` interpolation; `timeout_seconds` becomes `timeoutMs`. The
-merged `x-config` and the hook's qualified ID are handed to the script as
-`AIR_HOOK_CONFIG` and `AIR_HOOK_ID`.
+An AIR `matcher` becomes a pi-hooks matcher **scoped to the event**: tool name or
+`input.command` on the tool events, prompt text on `user_prompt_submit`. Matching is
+case-insensitive and Claude Code's tool names (`Bash`, `Edit`, `Write`, …) are aliased
+onto Pi's, since this bridge accepts Claude's event spellings and will therefore be
+handed Claude-authored hooks.
+
+`command` runs through a shell when the hook declares no `args` — AIR defines it as
+"Shell command to execute", so `foo && bar` is valid — and as an argv pair when `args`
+are present. Either way it runs from the hook's own directory, so a relative
+`./notify.sh` resolves. `timeout_seconds` becomes `timeoutMs`. `env` values and the
+merged `x-config` get `${VAR}` interpolation and reach the script as ordinary
+environment variables (`AIR_HOOK_CONFIG`, plus `AIR_HOOK_ID`) — never disk.
+
+A hook's non-zero exit blocks the event where Pi allows blocking, which is what makes
+an AIR guardrail a guardrail.
 
 ## Required peers
 
@@ -133,7 +142,10 @@ own factory**, before the adapter's runs.
 Writes are conservative. Servers this package owns are tagged with an
 `x-pi-plugins` provenance key, so:
 
-- hand-written entries are never modified;
+- hand-written entries are never modified — and names claimed by the *other* configs
+  the adapter merges first (`~/.config/mcp/mcp.json`, the Pi global config, and
+  `<cwd>/.mcp.json`) are reserved too, since its merge is a shallow later-wins spread
+  that would otherwise blend our entry into someone else's;
 - a plugin's server whose natural name is already taken is written under its
   qualified name instead, and the rename is reported — rather than dropped or
   overwritten;

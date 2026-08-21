@@ -58,10 +58,13 @@ describe("bundled skills", () => {
   it("reaches the model through Pi's own skill loading", async () => {
     const result = await runWithAir();
     expectCleanRun(result);
-    // The strongest available proof: Pi put the plugin's skill in the system prompt
-    // it sent upstream, so the simulated model's request payload carries the marker.
+    // Pi put the plugin's skill in the system prompt it sent upstream: the payload
+    // carries the skill's name, description, and the on-disk location Pi resolved it
+    // to — which is the AIR catalog directory, not a copy.
     const payload = JSON.stringify(result.llm.requests);
     expect(payload).toContain("repo-conventions");
+    expect(payload).toContain("Carries the conventions a change is expected to follow");
+    expect(payload).toContain("catalog/skills/repo-conventions/SKILL.md");
     expect(result.stderr).toContain("[pi-plugins] contributing skill paths");
   });
 });
@@ -154,11 +157,28 @@ describe("MCP composition", () => {
     expect(config.mcpServers["eslint-server"]?.command).toBe("npx");
   });
 
-  it("never starts a server itself", async () => {
-    const result = await runWithAir();
+  it("hands the server to a really-installed pi-mcp-adapter, which picks it up", async () => {
+    // The composition this package exists to deliver, proven rather than asserted:
+    // install the real adapter the way `pi install npm:pi-mcp-adapter` would, run
+    // real Pi, and check the adapter loaded the server pi-plugins wrote for it.
+    const result = await runWithAir({
+      withMcpAdapter: true,
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo composed" } },
+        { type: "text", text: "ok" },
+      ],
+      prompt: "go",
+    });
     expectCleanRun(result);
-    // No MCP tool was registered and nothing was spawned by this package.
-    expect(JSON.stringify(result.llm.requests)).not.toContain("eslint");
+    expect(result.stderr).toContain("wrote MCP server(s) eslint-server");
+    // pi-plugins found it, so the "not installed" warning must be absent.
+    expect(result.stderr).toContain("[pi-plugins] pi-mcp-adapter found at");
+    expect(result.stderr).not.toContain("pi-mcp-adapter is NOT installed");
+    // The adapter is genuinely live and loaded *our* server: its gateway tool reaches
+    // the model, and the tool's own description names the server pi-plugins wrote.
+    const payload = JSON.stringify(result.llm.requests);
+    expect(payload).toContain('"name":"mcp"');
+    expect(payload).toContain("Servers: eslint-server");
   });
 });
 

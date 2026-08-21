@@ -95,6 +95,31 @@ describe("activate", () => {
     ).toEqual(["@local/scoped"]);
   });
 
+  it("activates a hook and a server only once when two plugins both bundle them", () => {
+    // Without a global guard the hook runs twice per event and the server is launched
+    // twice under two names — the dedup AIR's ID-reference model exists to enable.
+    fullCatalog();
+    write("catalog/plugins.json", {
+      a: {
+        description: "d",
+        hooks: ["guard"],
+        mcp_servers: ["eslint"],
+        default_in_roots: ["*"],
+      },
+      b: {
+        description: "d",
+        hooks: ["guard"],
+        mcp_servers: ["eslint"],
+        default_in_roots: ["*"],
+      },
+    });
+    const result = activate({ cwd: dir, env: {} });
+    expect(result.plugins).toHaveLength(2);
+    expect(result.hooks.map((h) => h.airId)).toEqual(["@local/guard"]);
+    expect(result.mcpServers.map((s) => s.id)).toEqual(["@local/eslint"]);
+    expect(result.warnings).toEqual([]);
+  });
+
   it("deduplicates a skill path two plugins both bundle", () => {
     fullCatalog();
     write("catalog/plugins.json", {

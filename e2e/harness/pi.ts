@@ -8,7 +8,7 @@
  * loader and dispatching through Pi's own event bus.
  */
 import { execSync, spawn } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,6 +72,12 @@ export interface RunPiOptions {
    * need a real git repository rather than a bare directory.
    */
   setupCommands?: string[];
+  /**
+   * Install `pi-mcp-adapter` into the run's project package directory, the way
+   * `pi install npm:pi-mcp-adapter` would. Symlinked from this repo's own
+   * node_modules, where it is present as a declared peer of pi-plugins.
+   */
+  withMcpAdapter?: boolean;
   timeoutMs?: number;
 }
 
@@ -140,6 +146,12 @@ export async function runPi(options: RunPiOptions): Promise<PiRunResult> {
     writeFileSync(target, contents);
   }
 
+  if (options.withMcpAdapter) {
+    const target = join(cwd, ".pi", "npm", "node_modules");
+    mkdirSync(target, { recursive: true });
+    symlinkSync(join(REPO_ROOT, "node_modules", "pi-mcp-adapter"), join(target, "pi-mcp-adapter"));
+  }
+
   for (const command of options.setupCommands ?? []) {
     execSync(command, {
       cwd,
@@ -148,7 +160,14 @@ export async function runPi(options: RunPiOptions): Promise<PiRunResult> {
     });
   }
 
-  const extensions = options.extensions ?? [HOOKS_EXTENSION];
+  const extensions = [
+    ...(options.extensions ?? [HOOKS_EXTENSION]),
+    // Loaded after pi-plugins, mirroring the documented install order: its factory
+    // reads .pi/mcp.json, which pi-plugins must have written by then.
+    ...(options.withMcpAdapter
+      ? [join(REPO_ROOT, "node_modules", "pi-mcp-adapter", "index.ts")]
+      : []),
+  ];
   const args = [
     PI_CLI_ENTRY,
     "--provider",

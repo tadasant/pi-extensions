@@ -33,6 +33,7 @@ function emptyOutcome(): HookOutcome {
 }
 
 export interface RunnerDeps {
+  /** Mutable: a session can switch directories via `/resume`. */
   cwd: string;
   /** Diagnostics sink. Defaults to stderr, which is where Pi surfaces extension logs. */
   log?: (message: string) => void;
@@ -66,6 +67,11 @@ export class HookRunner {
     private config: LoadedConfig,
     private readonly deps: RunnerDeps,
   ) {}
+
+  /** Retarget the runner after a session switches to a different directory. */
+  setCwd(cwd: string): void {
+    this.deps.cwd = cwd;
+  }
 
   setConfig(config: LoadedConfig): void {
     this.config = config;

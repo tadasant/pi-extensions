@@ -20,6 +20,39 @@ import type { McpEntry } from "./types.ts";
 export const PROJECT_MCP_CONFIG = join(".pi", "mcp.json");
 
 /**
+ * The other files `pi-mcp-adapter` merges before `.pi/mcp.json`.
+ *
+ * Its merge is a shallow per-key spread with later winning, so a name we write here
+ * would silently override — and partially blend with — a server declared in one of
+ * these. Reserving their names is what keeps "hand-written entries are never
+ * modified" true beyond our own file.
+ */
+export function precedingConfigPaths(cwd: string, env: NodeJS.ProcessEnv): string[] {
+  const home = env.HOME ?? "";
+  const agentDir = env.PI_CODING_AGENT_DIR ?? (home ? join(home, ".pi", "agent") : "");
+  return [
+    home ? join(home, ".config", "mcp", "mcp.json") : "",
+    agentDir ? join(agentDir, "mcp.json") : "",
+    join(cwd, ".mcp.json"),
+  ].filter(Boolean);
+}
+
+/** Server names already claimed by a config the adapter reads before ours. */
+export function reservedServerNames(cwd: string, env: NodeJS.ProcessEnv): Set<string> {
+  const reserved = new Set<string>();
+  for (const path of precedingConfigPaths(cwd, env)) {
+    if (!existsSync(path)) continue;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as McpConfigFile;
+      for (const name of Object.keys(parsed?.mcpServers ?? {})) reserved.add(name);
+    } catch {
+      // Not our file to validate; a name we cannot read is a name we cannot reserve.
+    }
+  }
+  return reserved;
+}
+
+/**
  * Marks the servers this adapter owns inside `.pi/mcp.json`.
  *
  * Without it, a server contributed by a plugin the user later removed would linger
@@ -51,9 +84,13 @@ export interface McpConfigFile {
  * be used verbatim. The short ID is preferred; a collision falls back to the full
  * qualified ID with the unsafe characters replaced.
  */
+export function sanitizeKey(value: string): string {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 export function serverKey(qualifiedId: string, taken: Set<string>): string {
   const shortId = qualifiedId.slice(qualifiedId.lastIndexOf("/") + 1);
-  const sanitize = (value: string) => value.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const sanitize = sanitizeKey;
   const preferred = sanitize(shortId);
   if (preferred.length > 0 && !taken.has(preferred)) return preferred;
   let candidate = sanitize(qualifiedId.replace(/^@/, ""));
@@ -68,35 +105,43 @@ export function serverKey(qualifiedId: string, taken: Set<string>): string {
  * AIR's `type` distinguishes stdio from the HTTP transports; the adapter infers the
  * same thing from whether `command` or `url` is present, so `type` is dropped rather
  * than passed through as a field it would not understand.
+ *
+ * **`${VAR}` in `env`, `headers`, and the OAuth block is deliberately left
+ * unexpanded.** `pi-mcp-adapter` interpolates those itself at connect time with the
+ * same syntax, and this config is written to a project file that nobody gitignores —
+ * resolving a token here would put it in plaintext on disk for no benefit. Only
+ * `command`, `args`, and `url`, which the adapter does *not* interpolate, are
+ * expanded.
  */
 export function translateServer(entry: McpEntry, env: NodeJS.ProcessEnv): McpServerEntry {
   const expand = (value: unknown) =>
     typeof value === "string" ? interpolate(value, env) : (value as string);
-  const expandRecord = (value: unknown): Record<string, string> | undefined => {
+  const passthroughRecord = (value: unknown): Record<string, string> | undefined => {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, expand(raw)]),
+      Object.entries(value as Record<string, unknown>).map(([key, raw]) => [key, String(raw)]),
     );
   };
 
   const out: McpServerEntry = {};
   if (typeof entry.command === "string") out.command = expand(entry.command);
   if (Array.isArray(entry.args)) out.args = entry.args.map((arg) => expand(arg));
-  const envVars = expandRecord(entry.env);
-  if (envVars) out.env = envVars;
   if (typeof entry.url === "string") out.url = expand(entry.url);
-  const headers = expandRecord(entry.headers);
+  // Verbatim: the adapter expands these, and a resolved secret must not hit disk.
+  const envVars = passthroughRecord(entry.env);
+  if (envVars) out.env = envVars;
+  const headers = passthroughRecord(entry.headers);
   if (headers) out.headers = headers;
 
   if (entry.oauth && typeof entry.oauth === "object") {
     const oauth = entry.oauth as Record<string, unknown>;
     const mapped: Record<string, unknown> = {};
-    if (typeof oauth.clientId === "string") mapped.clientId = expand(oauth.clientId);
-    if (typeof oauth.clientSecret === "string") mapped.clientSecret = expand(oauth.clientSecret);
+    if (typeof oauth.clientId === "string") mapped.clientId = oauth.clientId;
+    if (typeof oauth.clientSecret === "string") mapped.clientSecret = oauth.clientSecret;
     if (Array.isArray(oauth.scopes)) mapped.scopes = oauth.scopes;
-    if (typeof oauth.redirectUri === "string") mapped.redirectUri = expand(oauth.redirectUri);
+    if (typeof oauth.redirectUri === "string") mapped.redirectUri = oauth.redirectUri;
     if (typeof oauth.authServerMetadataUrl === "string") {
-      mapped.authServerMetadataUrl = expand(oauth.authServerMetadataUrl);
+      mapped.authServerMetadataUrl = oauth.authServerMetadataUrl;
     }
     out.oauth = mapped;
     out.auth = "oauth";
@@ -116,6 +161,8 @@ export interface MaterializeResult {
    */
   renamed: { id: string; key: string }[];
   changed: boolean;
+  /** Set when the existing file could not be parsed, so nothing was written. */
+  unparseable?: string;
 }
 
 /**
@@ -141,9 +188,17 @@ export function materializeMcpConfig(
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
         config = parsed as McpConfigFile;
       }
-    } catch {
-      // A malformed file is the user's, not ours. Leave it and write nothing.
-      return { path, written: [], removed: [], renamed: [], changed: false };
+    } catch (error) {
+      // A malformed file is the user's, not ours. Leave it — but say so, or the
+      // plugin is half-activated exactly as the docs promise it will not be.
+      return {
+        path,
+        written: [],
+        removed: [],
+        renamed: [],
+        changed: false,
+        unparseable: (error as Error).message,
+      };
     }
   }
   const before = JSON.stringify(config);
@@ -160,10 +215,12 @@ export function materializeMcpConfig(
 
   const written: string[] = [];
   const renamed: { id: string; key: string }[] = [];
-  const taken = new Set(Object.keys(existing));
+  const taken = new Set([...Object.keys(existing), ...reservedServerNames(cwd, env)]);
   for (const server of servers) {
     const key = serverKey(server.id, taken);
-    const natural = server.id.slice(server.id.lastIndexOf("/") + 1);
+    // Compare against the *sanitized* short id, or a dot in the id alone would look
+    // like a collision that never happened.
+    const natural = sanitizeKey(server.id.slice(server.id.lastIndexOf("/") + 1));
     if (key !== natural) renamed.push({ id: server.id, key });
     taken.add(key);
     existing[key] = { ...translateServer(server.entry, env), [PROVENANCE_KEY]: server.id };
@@ -215,12 +272,15 @@ export function findMcpAdapter(options: {
 }
 
 /** The message shown when a plugin bundles MCP servers but the adapter is absent. */
-export function missingAdapterMessage(serverIds: string[]): string {
+export function missingAdapterMessage(serverIds: string[], written = true): string {
   return (
     `${serverIds.length} MCP server(s) bundled by an active AIR plugin ` +
     `(${serverIds.join(", ")}) cannot be started: pi-mcp-adapter is not installed. ` +
     "It is a required peer of @tadasant/pi-plugins — install it with " +
-    "`pi install npm:pi-mcp-adapter`. The servers have still been written to " +
-    "the MCP config, so they will start as soon as the adapter is present."
+    "`pi install npm:pi-mcp-adapter`." +
+    (written
+      ? " The servers have still been written to the MCP config, so they will start " +
+        "as soon as the adapter is present."
+      : " They could not be written either — see the config error above.")
   );
 }

@@ -193,6 +193,32 @@ describe("composition", () => {
     ]);
   });
 
+  it("expands a diamond once rather than re-walking the shared subtree", () => {
+    // Re-walking is exponential in depth and blew the stack on deep org catalogs.
+    const catalog = composed({
+      base: { description: "d", skills: ["shared"] },
+      left: { description: "d", plugins: ["base"], skills: ["l"] },
+      right: { description: "d", plugins: ["base"], skills: ["r"] },
+      top: { description: "d", plugins: ["left", "right"], skills: ["t"] },
+    });
+    const resolved = resolvePlugin(catalog, "@local/top");
+    expect(resolved.skills).toEqual(["@local/shared", "@local/l", "@local/r", "@local/t"]);
+    expect(resolved.composedFrom).toEqual(["@local/left", "@local/base", "@local/right"]);
+  });
+
+  it("resolves a deep composition chain without blowing the stack", () => {
+    const plugins: Record<string, unknown> = { base: { description: "d", skills: ["s"] } };
+    let previous = "base";
+    for (let i = 0; i < 60; i++) {
+      const name = `p${i}`;
+      plugins[name] = { description: "d", plugins: [previous, "base"], skills: [`s${i}`] };
+      previous = name;
+    }
+    const catalog = composed(plugins);
+    expect(() => resolvePlugin(catalog, `@local/${previous}`)).not.toThrow();
+    expect(resolvePlugin(catalog, `@local/${previous}`).skills).toHaveLength(61);
+  });
+
   it("rejects a circular reference at resolution time", () => {
     const catalog = composed({
       a: { description: "d", plugins: ["b"] },
