@@ -42,7 +42,7 @@ Exactly two pi packages, installable with `pi install npm:<package>`:
 | Package | What it does |
 |---|---|
 | [**`@tadasant/pi-hooks`**](packages/pi-hooks) | A declarative hook runner. `hooks.json` maps Pi lifecycle events (`session_start`, `tool_call`, `tool_result`, …) to actions, with the ability to block a tool call, rewrite its input, rewrite its result, or inject context. Ships five curated presets. |
-| [**`@tadasant/pi-plugins`**](packages/pi-plugins) | The Pi adapter for **AIR plugins**. Resolves an AIR plugin — including composition, `.plugin/plugin.json` manifests, and `default_in_roots` membership — and activates the skills and hooks it bundles inside a Pi session. Bundles the hooks engine, so an AIR hook runs on the same runner rather than a second hook path. |
+| [**`@tadasant/pi-plugins`**](packages/pi-plugins) | The Pi adapter for **AIR plugins**. Resolves an AIR plugin — including composition, `.plugin/plugin.json` manifests, and `default_in_roots` membership — and activates everything it bundles: skills through Pi's own skill loading, hooks through the bundled hooks engine, and MCP servers through [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter), a required peer. |
 
 Each package's README carries its full configuration reference.
 
@@ -93,9 +93,16 @@ Point Pi at an AIR config and the adapter resolves what a plugin bundles:
 }
 ```
 
-Pi then loads `repo-conventions` as a skill and enforces `block-prod-deploy` as a
-hook. The MCP server is resolved and reported but **not** started — that boundary is
-`pi-mcp-adapter`'s, and `packages/pi-plugins/README.md` explains the seam.
+Pi then loads `repo-conventions` as a skill, enforces `block-prod-deploy` as a hook,
+and runs `eslint-server` through `pi-mcp-adapter`. Supporting plugins means supporting
+what a plugin bundles — so `@tadasant/pi-plugins` composes with the extensions that
+already provide those capabilities rather than reimplementing them: the hooks engine
+is bundled, and `pi-mcp-adapter` is a required peer you install alongside it.
+
+```bash
+pi install npm:pi-mcp-adapter      # required peer
+pi install npm:@tadasant/pi-plugins
+```
 
 ## Testing philosophy
 

@@ -11,9 +11,15 @@
  *   loads them exactly as it loads any other skill directory;
  * - **hooks** are translated into `@tadasant/pi-hooks` definitions and dispatched by
  *   that engine, rather than growing a second hook path here;
- * - **MCP servers** are resolved and reported but never started — Pi's MCP support
- *   comes from `nicobailon/pi-mcp-adapter`, and re-implementing it here is out of
- *   scope. `/plugins` lists them so an MCP-capable extension can pick them up.
+ * - **MCP servers** are translated into the `.pi/mcp.json` that `pi-mcp-adapter`
+ *   reads. That adapter is a *required peer* — `pi install npm:pi-mcp-adapter` —
+ *   rather than a bundled dependency, because it carries native keychain binaries
+ *   for every platform. Nothing here speaks MCP; this package only writes the config
+ *   the adapter consumes, and says so loudly when the adapter is missing.
+ *
+ * That composition is why this file does its work in the extension **factory**
+ * rather than on `session_start`: `pi-mcp-adapter` calls `loadMcpConfig()` at factory
+ * time, so the config has to exist before its factory runs.
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HookOutcome } from "@tadasant/pi-hooks/src/runner.ts";
@@ -70,7 +76,7 @@ export default function piPlugins(pi: ExtensionAPI): void {
 
   const reload = (cwd: string): void => {
     try {
-      activation = activate({ cwd });
+      activation = activate({ cwd, materializeMcp: true });
     } catch (error) {
       activation = emptyActivation();
       activation.warnings.push(`AIR config could not be loaded: ${(error as Error).message}`);
@@ -88,13 +94,30 @@ export default function piPlugins(pi: ExtensionAPI): void {
     );
     log(
       `[pi-plugins] ${activation.skillPaths.length} skill path(s), ` +
-        `${activation.hooks.length} hook(s), ${activation.mcpServers.length} MCP server(s) reported`,
+        `${activation.hooks.length} hook(s), ${activation.mcpServers.length} MCP server(s)`,
     );
+    if (activation.mcp && activation.mcp.written.length > 0) {
+      log(
+        `[pi-plugins] wrote MCP server(s) ${activation.mcp.written.join(", ")} to ` +
+          `${activation.mcp.path} for pi-mcp-adapter`,
+      );
+      log(
+        activation.mcpAdapter
+          ? `[pi-plugins] pi-mcp-adapter found at ${activation.mcpAdapter}`
+          : "[pi-plugins] pi-mcp-adapter is NOT installed; those servers will not start",
+      );
+    }
   };
+
+  // Resolve during the factory, not on session_start: pi-mcp-adapter reads
+  // .pi/mcp.json when *its* factory runs, and it is declared after this extension.
+  reload(process.cwd());
 
   pi.on("session_start", async (_event, ctx) =>
     guard("session_start", undefined, async () => {
-      reload(ctx.cwd ?? process.cwd());
+      // The factory already resolved against process.cwd(); re-resolve only if the
+      // session's cwd differs, so a `/resume` into another directory still works.
+      if ((ctx.cwd ?? process.cwd()) !== process.cwd()) reload(ctx.cwd ?? process.cwd());
       const outcome = await runner.dispatch({ event: "session_start" });
       flushNotifications(outcome, ctx);
     }),
@@ -188,7 +211,19 @@ export default function piPlugins(pi: ExtensionAPI): void {
         if (plugin.skills.length > 0) lines.push(`    skills: ${plugin.skills.join(", ")}`);
         if (plugin.hooks.length > 0) lines.push(`    hooks: ${plugin.hooks.join(", ")}`);
         if (plugin.mcpServers.length > 0) {
-          lines.push(`    mcp servers: ${plugin.mcpServers.join(", ")} (reported, not started)`);
+          lines.push(`    mcp servers: ${plugin.mcpServers.join(", ")} (run by pi-mcp-adapter)`);
+        }
+      }
+      if (activation.mcp) {
+        lines.push(`  mcp config: ${activation.mcp.path}`);
+        lines.push(
+          `    pi-mcp-adapter: ${activation.mcpAdapter ?? "NOT INSTALLED (pi install npm:pi-mcp-adapter)"}`,
+        );
+        if (activation.mcp.written.length > 0) {
+          lines.push(`    wrote: ${activation.mcp.written.join(", ")}`);
+        }
+        if (activation.mcp.removed.length > 0) {
+          lines.push(`    removed: ${activation.mcp.removed.join(", ")}`);
         }
       }
       for (const hook of activation.hooks) {

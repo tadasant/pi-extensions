@@ -75,6 +75,14 @@ pi-extensions/
 - **An AIR hook does not get its own runner.** `src/hooks-bridge.ts` translates a
   `HOOK.json` into a `@tadasant/pi-hooks` definition, and `extensions/plugins.ts` drives
   the same `HookRunner`. Building a second hook path here would be a regression.
+- **pi-plugins resolves in its extension *factory*, not on `session_start`.**
+  `pi-mcp-adapter` calls `loadMcpConfig()` when its own factory runs, so `.pi/mcp.json`
+  has to be written before that. Moving this work to `session_start` would silently
+  break MCP support.
+- **`pi-hooks` is bundled; `pi-mcp-adapter` is a required peer.** The split is
+  deliberate: the hooks engine is 17 KB and its extension is referenced by path (which
+  Pi requires bundling for), while the MCP adapter drags per-platform native keychain
+  binaries that would make the published tarball ~36 MB.
 
 ## Domain Context
 
@@ -150,9 +158,10 @@ populated catalog worth reading for real-world examples.
   different ecosystem — consuming them is the whole point of `@tadasant/pi-plugins`.)
 - **A starter bundle.** An earlier revision of this repo shipped one. It was explicitly
   rejected. Two packages, no more.
-- **Implementing MCP inside the plugins adapter.** An AIR plugin can bundle MCP servers;
-  the adapter resolves and *reports* them and stops there. Starting them is
-  `pi-mcp-adapter`'s job.
+- **Implementing MCP inside the plugins adapter.** An AIR plugin can bundle MCP servers,
+  and `@tadasant/pi-plugins` *does* make them work — by translating them into the
+  `.pi/mcp.json` that `pi-mcp-adapter` reads, and declaring that adapter a required
+  peer. Composing with it is the job; speaking MCP is not.
 - **Zimmer integration.** Wiring Pi into Zimmer as a runtime is separate work in a separate
   repo. This repo publishes packages; it does not know about Zimmer.
 - **Forking or patching Pi.** Everything here is built *on top of* the public extension API.

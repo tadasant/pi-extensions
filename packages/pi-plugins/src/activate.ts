@@ -9,6 +9,7 @@ import { existsSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
 import { AirError, discoverAirConfig, loadAirConfig, loadCatalogs } from "./catalog.ts";
 import { translateHook } from "./hooks-bridge.ts";
+import { findMcpAdapter, materializeMcpConfig, missingAdapterMessage } from "./mcp-bridge.ts";
 import { resolvePlugin, selectPlugins } from "./resolve.ts";
 import type {
   ActivationResult,
@@ -23,6 +24,12 @@ import type {
 export interface ActivateOptions {
   cwd: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Write the resolved MCP servers into `.pi/mcp.json` so the bundled
+   * `pi-mcp-adapter` picks them up. Off in unit tests, which assert on the
+   * resolution result rather than on a side effect.
+   */
+  materializeMcp?: boolean;
 }
 
 function skillDirectory(artifact: Artifact<SkillEntry>): string {
@@ -76,6 +83,26 @@ export function activate(options: ActivateOptions): ActivationResult {
   }
 
   result.skillPaths = [...new Set(result.skillPaths)];
+
+  if (options.materializeMcp) {
+    const materialized = materializeMcpConfig(options.cwd, result.mcpServers, env);
+    result.mcp = materialized;
+    for (const { id, key } of materialized.renamed) {
+      result.warnings.push(
+        `MCP server ${id} was written as "${key}" because a hand-written entry in ` +
+          `${materialized.path} already uses its natural name`,
+      );
+    }
+    // Only complain when a plugin actually bundles MCP servers; a hooks-and-skills
+    // plugin has no reason to care whether the adapter is installed.
+    if (result.mcpServers.length > 0) {
+      const adapter = findMcpAdapter({ cwd: options.cwd, env });
+      result.mcpAdapter = adapter;
+      if (!adapter) {
+        result.warnings.push(missingAdapterMessage(result.mcpServers.map((s) => s.id)));
+      }
+    }
+  }
   return result;
 }
 

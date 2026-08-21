@@ -152,10 +152,21 @@ export interface ActivationResult {
   /** AIR hooks translated into pi-hooks definitions. */
   hooks: TranslatedHook[];
   /**
-   * MCP servers a plugin bundles. Deliberately *not* activated here — see
-   * README. Reported so an MCP-capable extension can consume them.
+   * MCP servers a plugin bundles, resolved from the catalog's `mcp.json`. These are
+   * handed to the bundled `pi-mcp-adapter` by writing `.pi/mcp.json`; nothing in this
+   * package speaks MCP itself.
    */
   mcpServers: { id: string; entry: McpEntry }[];
+  /** Where `pi-mcp-adapter` was found, when a plugin bundles MCP servers. */
+  mcpAdapter?: string;
+  /** What was written to `.pi/mcp.json`, when materialization ran. */
+  mcp?: {
+    path: string;
+    written: string[];
+    removed: string[];
+    renamed: { id: string; key: string }[];
+    changed: boolean;
+  };
   /** Non-fatal problems, surfaced by `/plugins` and on stderr. */
   warnings: string[];
 }

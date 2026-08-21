@@ -1,10 +1,11 @@
 # @tadasant/pi-plugins
 
 **AIR plugin support for the [Pi coding agent](https://github.com/earendil-works/pi).**
-Resolve an [AIR](https://github.com/pulsemcp/air) plugin and activate the skills and
-hooks it bundles inside a real Pi session.
+Resolve an [AIR](https://github.com/pulsemcp/air) plugin and activate the skills,
+hooks, and MCP servers it bundles inside a real Pi session.
 
 ```bash
+pi install npm:pi-mcp-adapter      # required peer
 pi install npm:@tadasant/pi-plugins
 ```
 
@@ -49,7 +50,7 @@ OpenCode.
 |---|---|
 | **skills** | Contributed through Pi's own `resources_discover` event as `skillPaths`. An AIR skill is a directory containing `SKILL.md`, which is exactly what Pi discovers, so they load like any other skill. |
 | **hooks** | Each `HOOK.json` is translated into a [`@tadasant/pi-hooks`](https://www.npmjs.com/package/@tadasant/pi-hooks) definition and dispatched by that engine. This package bundles it, so there is no second install and no second hook path. |
-| **MCP servers** | **Resolved and reported, never started** — see below. |
+| **MCP servers** | Translated into the `.pi/mcp.json` that [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter) reads, so that adapter starts and supervises them. |
 
 ## Configuration
 
@@ -100,18 +101,47 @@ name, `input.command`, `input.path`, prompt text). `command`/`args` become a pi-
 merged `x-config` and the hook's qualified ID are handed to the script as
 `AIR_HOOK_CONFIG` and `AIR_HOOK_ID`.
 
-## The MCP boundary
+## Required peers
 
-An AIR plugin can bundle MCP servers, and this package deliberately **does not start
-them**. Pi's MCP support comes from
-[`nicobailon/pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter);
-re-implementing MCP here would duplicate a solved problem and put two implementations
-in one session.
+Supporting AIR plugins means supporting what a plugin *bundles*. Skills, Pi already
+does natively. The other two come from extensions this package composes with rather
+than reimplements:
 
-Instead the adapter resolves each `mcp_servers` entry against the catalog's `mcp.json`
-and reports it — on stderr at startup and in `/plugins`, marked *reported, not
-started*. That is the seam: an MCP-capable extension can read those entries and do the
-wiring, and nothing here pretends to have done it.
+| Peer | How it is required | Why |
+|---|---|---|
+| [`@tadasant/pi-hooks`](https://www.npmjs.com/package/@tadasant/pi-hooks) | **Bundled** — shipped inside this package and listed in `pi.extensions`. | 17 KB, and Pi requires a pi package to bundle another whose extension it references by path. You never install it separately. |
+| [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter) | **A declared peer you install**: `pi install npm:pi-mcp-adapter` | It carries native keychain binaries for every platform; vendoring it would put a ~36 MB tarball on npm for something most Pi users already have. |
+
+So a complete install is two commands:
+
+```bash
+pi install npm:pi-mcp-adapter      # required peer: runs the MCP servers plugins bundle
+pi install npm:@tadasant/pi-plugins
+```
+
+**If the adapter is missing, this package says so and keeps going.** The servers are
+still written to `.pi/mcp.json` — they start the moment you install the adapter — and
+startup logs plus `/plugins` state plainly that it is not installed. A plugin that is
+silently half-activated is the failure this avoids.
+
+### How the MCP handoff works
+
+`pi-mcp-adapter` loads its config when *its extension factory runs*, not on
+`session_start`. So this package resolves plugins and writes `.pi/mcp.json` in **its
+own factory**, before the adapter's runs.
+
+Writes are conservative. Servers this package owns are tagged with an
+`x-pi-plugins` provenance key, so:
+
+- hand-written entries are never modified;
+- a plugin's server whose natural name is already taken is written under its
+  qualified name instead, and the rename is reported — rather than dropped or
+  overwritten;
+- servers written for a plugin that is no longer active are removed on the next run;
+- a malformed `.pi/mcp.json` is left completely alone.
+
+`${VAR}` interpolation is applied to `command`, `args`, `env`, `url`, `headers`, and
+the OAuth block, matching AIR's own secrets handling.
 
 ## Scope
 
