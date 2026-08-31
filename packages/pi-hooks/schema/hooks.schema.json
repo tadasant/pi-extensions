@@ -8,7 +8,7 @@
     "$schema": { "type": "string" },
     "extends": {
       "type": "array",
-      "description": "Configs merged in before this file's own hooks: 'preset:<name>', a relative path, or a Node-resolvable specifier.",
+      "description": "Configs merged in before this file's own hooks: a relative path, or a Node-resolvable specifier. AIR hooks are declared in an air.json instead, not here.",
       "items": { "type": "string" }
     },
     "hooks": { "type": "array", "items": { "$ref": "#/definitions/hook" } }
