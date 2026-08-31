@@ -169,6 +169,43 @@ describe("HOOK.json", () => {
     );
   });
 
+  it("rejects a malformed optional field by name", () => {
+    // Only event and command used to be checked, so a string `args` — a plausible
+    // typo, since AIR's docs show command/args as a pair — was spread character by
+    // character into an argv that could not spawn, blocking every tool call with an
+    // incomprehensible reason and no error naming the hook.
+    const cases: [Record<string, unknown>, RegExp][] = [
+      [{ args: "./g.mjs" }, /"args" must be an array of strings/],
+      [{ args: [1] }, /"args" must be an array of strings/],
+      [{ env: "nope" }, /"env" must be an object/],
+      [{ "x-config": [1, 2] }, /"x-config" must be an object/],
+      [{ matcher: 7 }, /"matcher" must be a string/],
+      [{ timeout_seconds: "5" }, /"timeout_seconds" must be a number/],
+    ];
+    for (const [extra, expected] of cases) {
+      write("hooks/malformed/HOOK.json", { event: "stop", command: "node", ...extra });
+      expect(
+        () => readHookJson(join(dir, "hooks", "malformed"), "@local/malformed"),
+        String(expected),
+      ).toThrow(expected);
+    }
+  });
+
+  it("accepts every optional field AIR permits, and their absence", () => {
+    write("hooks/full/HOOK.json", {
+      event: "pre_tool_call",
+      command: "node",
+      args: ["./g.mjs"],
+      env: { A: "1" },
+      "x-config": { a: 1 },
+      matcher: "bash",
+      timeout_seconds: 5,
+    });
+    expect(() => readHookJson(join(dir, "hooks", "full"), "@local/full")).not.toThrow();
+    write("hooks/min/HOOK.json", { event: "stop", command: "./x.sh" });
+    expect(() => readHookJson(join(dir, "hooks", "min"), "@local/min")).not.toThrow();
+  });
+
   it("keeps loading the rest of an index when one hook is broken", () => {
     write("hooks/good/HOOK.json", { event: "stop", command: "./ok.sh" });
     const index = write("hooks.json", {
