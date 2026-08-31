@@ -2,19 +2,31 @@
  * Shared helpers for the AIR hooks this package ships.
  *
  * pi-hooks delivers the event as JSON on stdin and as `PI_HOOK_*` variables, and
- * treats a non-zero exit as a block with stderr as the reason. These three helpers
- * are all a guard needs.
+ * treats a non-zero exit as a block with stderr as the reason.
  */
+import { writeSync } from "node:fs";
 
-/** The full event, from stdin, falling back to `PI_HOOK_PAYLOAD`. */
+/**
+ * The full event, from stdin.
+ *
+ * A guard that cannot read the event refuses rather than waving the call through:
+ * failing open would silently disable the guardrail on exactly the malformed input
+ * most likely to be interesting.
+ */
 export async function readEvent() {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
-  const raw = chunks.join("").trim() || process.env.PI_HOOK_PAYLOAD || "{}";
+  // Concat first: joining Buffers decodes each independently, so a UTF-8 sequence
+  // straddling a read boundary would become replacement characters and break JSON.
+  const raw = Buffer.concat(chunks.map((c) => Buffer.from(c)))
+    .toString("utf8")
+    .trim();
+  const source = raw || process.env.PI_HOOK_PAYLOAD || "";
+  if (!source) block("could not read the hook event (empty stdin)");
   try {
-    return JSON.parse(raw);
-  } catch {
-    return {};
+    return JSON.parse(source);
+  } catch (error) {
+    block(`could not parse the hook event: ${error.message}`);
   }
 }
 
@@ -29,6 +41,13 @@ export function config() {
 
 /** Refuse the event: stderr becomes the reason the model is shown. */
 export function block(reason) {
-  console.error(`pi-hooks: ${reason}`);
+  // writeSync, not console.error: stderr is async for pipes, and process.exit can
+  // truncate or drop a long reason, leaving the model with nothing.
+  writeSync(2, `pi-hooks: ${reason}\n`);
   process.exit(1);
+}
+
+/** The project directory, as opposed to the hook's own. */
+export function projectDir() {
+  return process.env.PI_HOOK_CWD || process.cwd();
 }

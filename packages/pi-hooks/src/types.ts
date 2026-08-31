@@ -145,9 +145,9 @@ export interface HookDefinition {
 export interface HooksConfig {
   $schema?: string;
   /**
-   * Configs to merge in before this one's own hooks. Each entry is a `preset:<name>`
-   * reference to a preset bundled with this package, a path relative to the config
-   * file, or a Node-resolvable specifier such as `@scope/pkg/presets/x.json`.
+   * Configs to merge in before this one's own hooks: a path relative to this file, or
+   * a Node-resolvable specifier such as `@scope/pkg/hooks.json`. To pull in AIR hooks
+   * instead, name their catalog in an `air.json`.
    */
   extends?: string[];
   hooks?: HookDefinition[];

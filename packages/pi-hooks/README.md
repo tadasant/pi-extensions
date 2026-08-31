@@ -64,7 +64,7 @@ looks for `air.json`, then `.air/air.json`; `PI_HOOKS_AIR` overrides it.
 
 | Channel | Contents |
 |---|---|
-| **stdin** | The whole event as JSON — never truncated |
+| **stdin** | The whole event as JSON — never truncated. A guard that cannot parse it should refuse, not continue; the bundled ones do. |
 | `PI_HOOK_EVENT` | `tool_call`, `tool_result`, … |
 | `PI_HOOK_TOOL` | Tool name |
 | `PI_HOOK_INPUT` | Tool arguments, as JSON |
@@ -89,15 +89,29 @@ AIR's vocabulary is agent-agnostic and broader than Pi's surface:
 | `stop` | `agent_settled` |
 
 Claude Code's PascalCase spellings (`SessionStart`, `PreToolUse`, …) are accepted as
-identity mappings, as AIR specifies. **`pre_commit`, `post_commit`, `subagent_stop`,
+identity mappings, as AIR specifies. `default_in_roots` on a hook entry is accepted
+but not acted on — Pi has no roots concept, so every hook in a loaded index is
+active. (`@tadasant/pi-plugins` *does* honour it, for plugin selection.) **`pre_commit`, `post_commit`, `subagent_stop`,
 `notification`, and `pre_compact` are not activated** — Pi has no git-commit
 lifecycle, no subagent concept, and no extension-visible notification event, and this
 package does not expose compaction. A hook using one of those loads with a named
 warning rather than silently never firing.
 
-An AIR `matcher` is scoped to the fields each event carries — tool name or
-`input.command` on the tool events, prompt text on `user_prompt_submit` — matched
-case-insensitively, with Claude's tool names (`Bash`, `Edit`, …) aliased onto Pi's.
+An AIR `matcher` is scoped to the fields each event carries, matched
+case-insensitively:
+
+| Event | Matched against |
+|---|---|
+| `pre_tool_call` / `post_tool_call` | The tool name alone when the matcher *names a tool* (so `Write` does not also fire on `git write-tree`); otherwise tool name **or** `input.command`, so a word like `deploy` still matches a shell command |
+| `user_prompt_submit` | The prompt text |
+| `session_start` / `session_end` | The session `reason` (`startup`, `resume`, `quit`, …) |
+| `stop` | Nothing — the event carries no payload, so a matcher here loads with a warning |
+
+Claude's tool names (`Bash`, `Edit`, `Write`, …) are aliased onto Pi's.
+
+`default_in_roots` is accepted but not acted on: Pi has no roots concept, so every
+hook in a loaded index is active. (`@tadasant/pi-plugins` *does* honour it for
+selecting plugins.)
 
 ## Bundled AIR hooks
 
@@ -113,11 +127,13 @@ catalog in your `air.json`:
 
 | Hook | What it stops |
 |---|---|
-| `block-secret-access` | Reading, writing, or printing `.env`, private keys, `.netrc`, `.npmrc`, service-account JSON. `.env.example`/`.env.sample` are exempt. |
-| `block-force-push` | `git push --force` without `--force-with-lease`; pushes naming `main`, `master`, or `HEAD`. Sees through `git -C <dir>`. |
-| `block-history-rewrite` | `git reset --hard`, `git clean -fd`, and friends that discard uncommitted work. |
-| `block-destructive-bash` | `rm -rf` of `/`, `~`, or the working tree (any flag order); `curl … \| sh`; `sudo`; `DROP TABLE`/`TRUNCATE`. |
+| `block-secret-access` | Reading, writing, or printing `.env`, private keys, `.netrc`, `.npmrc`, service-account JSON — through the file tools *or* bash. `.env.example`/`.env.sample` are exempt. Both branches honour the same `x-config`, so a `secretPaths`/`allowPaths` overlay changes the whole hook. |
+| `block-dangerous-bash` | `rm -rf` of `/`, `~`, or the working tree (any flag order, with or without a trailing `/` or glob); `curl … \| sh` and `bash <(curl …)`; `sudo`; `git push --force`/`-f` and pushes naming `main`/`master`/`HEAD`; `git reset --hard`, `git clean -fd`, `git checkout .`; `DROP TABLE`/`TRUNCATE`. Sees through `git -C <dir>`. |
 | `session-git-status` | Advisory — reports repository state at session start. Never blocks. |
+
+The three git/shell concerns are one hook rather than three because **every AIR hook
+is a process spawn on Pi's hot path**, and all three are scoped to the same `bash`
+tool and event. Fork the directory if you want only some of the rules.
 
 These are ordinary AIR artifacts: read them, copy them, or fork them.
 
@@ -127,6 +143,13 @@ AIR's `HOOK.json` can run a command and block on its exit code. Pi can do more t
 that, and this package exposes the extra in its own config file — a superset, not a
 replacement. Reach for it when you need a block **reason** without writing a script,
 or need to rewrite a tool's input:
+
+The `$schema` below describes the superset only — an AIR index at the same path is
+validated by [AIR's own hooks schema](https://github.com/pulsemcp/air/blob/main/schemas/hooks.schema.json).
+
+The `$schema` below describes this superset only — an AIR index placed at the same
+path validates against [AIR's hooks schema](https://github.com/pulsemcp/air/blob/main/schemas/hooks.schema.json)
+instead.
 
 ```json
 // .pi/hooks.json
@@ -151,7 +174,9 @@ or need to rewrite a tool's input:
 
 Both formats load together and are dispatched by the same runner, so a project can
 use either or both. The two are told apart by shape: an AIR index is a map of
-`id -> { description, path }`, the superset has a top-level `hooks` array.
+`id -> { description, path }`, the superset has a top-level `hooks` array. The
+`$schema` above describes the superset only — an editor will flag an AIR index
+against it, so leave the line off when a file holds AIR entries.
 
 **Actions:** `block` (with a written reason, optionally terminating the agent loop),
 `patch-input` (rewrite the arguments Pi is about to execute), `command` (same

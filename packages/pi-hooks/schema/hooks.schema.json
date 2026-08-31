@@ -1,14 +1,14 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/tadasant/pi-extensions/main/packages/pi-hooks/schema/hooks.schema.json",
-  "title": "pi-hooks configuration",
+  "title": "pi-hooks configuration (Pi-native superset; AIR hook indexes use the AIR hooks schema)",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
     "extends": {
       "type": "array",
-      "description": "Configs merged in before this file's own hooks: a relative path, or a Node-resolvable specifier. AIR hooks are declared in an air.json instead, not here.",
+      "description": "Configs merged in before this file's own hooks: a relative path, or a Node-resolvable specifier. AIR hooks are declared in an air.json catalog instead, not here.",
       "items": { "type": "string" }
     },
     "hooks": { "type": "array", "items": { "$ref": "#/definitions/hook" } }

@@ -315,23 +315,3 @@ until `main` existed. That exception is spent — it does not extend to your wor
   A: `expect(result.stderr).not.toContain("[pi-hooks] blocked")`. Asserting the tool result
   is not an error tests the environment instead — plenty of legitimate commands (anything
   touching a git remote) fail on their own inside a bare scratch directory.
-
-- **Q: I am adding an action that writes into the tool input. Anything to know?**
-  A: Route it through `setPath`, which refuses `__proto__`/`constructor`/`prototype`
-  segments. Dot paths reach that function from a `patch-input` action's keys *and*
-  from whatever JSON a `command` hook printed on stdout, and the second of those is
-  not something the user authored.
-
-- **Q: A `command` hook prints JSON and exits non-zero. Is that a control object?**
-  A: Only if the JSON carries a key this layer understands. Plenty of tools emit JSON
-  diagnostics and a non-zero exit (`eslint -f json`, `semgrep --json`); treating those
-  as control objects would cancel the exit-code semantics and make the hook silently
-  do nothing.
-
-- **Q: Can a hook block on any event?**
-  A: No — only `tool_call`, `user_bash`, and `user_prompt`, the ones Pi lets an
-  extension veto (`BLOCKABLE_EVENTS`). Setting `blocked` on any other event would be
-  dropped by `extensions/hooks.ts` and the failure would vanish, so the runner logs
-  instead.
-
-

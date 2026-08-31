@@ -337,10 +337,13 @@ export function hooksForEvent(config: LoadedConfig, event: HookEvent): LoadedHoo
  */
 export function loadAirHooks(cwd: string, env: NodeJS.ProcessEnv = process.env): LoadedConfig {
   const out: LoadedConfig = { hooks: [], sources: [], errors: [] };
-  const airConfig = discoverAirConfig(cwd, env);
-  if (!airConfig) return out;
-
   const warnings: string[] = [];
+  const airConfig = discoverAirConfig(cwd, env, warnings);
+  if (!airConfig) {
+    out.errors.push(...warnings);
+    return out;
+  }
+
   for (const indexPath of discoverAirHookIndexes(airConfig, warnings)) {
     const hooks = loadAirHooksIndex(indexPath, warnings, { env });
     hooks.forEach((definition, index) => {

@@ -73,6 +73,9 @@ export const UNSUPPORTED_AIR_EVENTS: Record<string, string> = {
   Notification: "Pi does not expose a notification event to extensions",
 };
 
+/** Pi's built-in tools, per its docs. Used to tell a tool-name matcher from a word. */
+const PI_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"];
+
 /** Claude Code tool names mapped onto Pi's, for matchers written against Claude. */
 const TOOL_ALIASES: Record<string, string> = {
   Bash: "bash",
@@ -121,6 +124,9 @@ export function mergeXConfig(
   if (!overlay) return { ...base };
   const out: Record<string, unknown> = { ...base };
   for (const [key, value] of Object.entries(overlay)) {
+    // Consistent with setPath's guard: a JSON key like __proto__ is dropped rather
+    // than assigned, where it would silently vanish from AIR_HOOK_CONFIG anyway.
+    if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
     const existing = out[key];
     const mergeable = (candidate: unknown) =>
       candidate && typeof candidate === "object" && !Array.isArray(candidate);
@@ -142,22 +148,34 @@ export function mergeXConfig(
 export function buildAirMatch(
   matcher: string | undefined,
   piEvent: string,
+  warnings: string[] = [],
+  label = "hook",
 ): HookMatcher | undefined {
   if (matcher === undefined) return undefined;
   const pattern = `/${matcher}/i`;
+
   if (piEvent === "user_prompt") return { prompt: pattern };
-  if (piEvent === "tool_call" || piEvent === "tool_result") {
-    const aliased = TOOL_ALIASES[matcher];
-    return {
-      any: [
-        { tool: pattern },
-        ...(aliased ? [{ tool: aliased }] : []),
-        { input: { command: pattern } },
-      ],
-    };
+  // session_start / session_shutdown carry a `reason`, the only event data there is.
+  if (piEvent === "session_start" || piEvent === "session_shutdown") return { reason: pattern };
+  if (piEvent === "agent_settled") {
+    warnings.push(
+      `${label}: matcher "${matcher}" is ignored on this event — it carries no data to match`,
+    );
+    return undefined;
   }
-  // session_start / session_shutdown / agent_settled carry no matchable payload.
-  return undefined;
+
+  const aliased = TOOL_ALIASES[matcher];
+  // A matcher that *names a tool* is a tool filter, so keep it off the command: ORing
+  // in `input.command` would make a hook scoped to `Write` also fire on
+  // `git write-tree`, a false refusal of legitimate work from a blocking guard.
+  // Anything else — `deploy`, `deploy.*prod` — is a pattern over the command, which
+  // is what AIR's "matched against event data" means for a tool event.
+  const namesATool = aliased !== undefined || PI_TOOL_NAMES.includes(matcher.toLowerCase());
+  if (namesATool) {
+    const names: HookMatcher[] = [{ tool: pattern }, ...(aliased ? [{ tool: aliased }] : [])];
+    return names.length === 1 ? (names[0] as HookMatcher) : { any: names };
+  }
+  return { any: [{ tool: pattern }, { input: { command: pattern } }] };
 }
 
 /** Read and validate a `HOOK.json` from a hook directory. */
@@ -178,6 +196,29 @@ export function readHookJson(dir: string, label: string): AirHookDefinition {
   }
   if (typeof definition.command !== "string" || definition.command.length === 0) {
     throw new AirHookError(`hook ${label}: ${path}: "command" is required`);
+  }
+  // The optional fields are checked too. A string `args` — a plausible typo, since
+  // AIR's docs show command/args as a pair — would otherwise be spread character by
+  // character into an argv that fails to spawn, blocking every tool call with an
+  // incomprehensible reason and no config error naming the hook.
+  const bad = (field: string, expected: string) =>
+    new AirHookError(`hook ${label}: ${path}: "${field}" must be ${expected}`);
+  if (definition.args !== undefined) {
+    if (!Array.isArray(definition.args) || definition.args.some((a) => typeof a !== "string")) {
+      throw bad("args", "an array of strings");
+    }
+  }
+  for (const field of ["env", "x-config"] as const) {
+    const value = definition[field];
+    if (value !== undefined && (!value || typeof value !== "object" || Array.isArray(value))) {
+      throw bad(field, "an object");
+    }
+  }
+  if (definition.matcher !== undefined && typeof definition.matcher !== "string") {
+    throw bad("matcher", "a string");
+  }
+  if (definition.timeout_seconds !== undefined && typeof definition.timeout_seconds !== "number") {
+    throw bad("timeout_seconds", "a number");
   }
   return definition;
 }
@@ -225,15 +266,18 @@ export function translateAirHook(
   }
 
   const xConfig = mergeXConfig(definition["x-config"], options.xConfigOverlay);
-  const hookEnv: Record<string, string> = { AIR_HOOK_ID: id };
+  const hookEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(definition.env ?? {})) {
     hookEnv[key] = interpolate(String(value), env);
   }
+  // Set after the hook's own env, so both AIR-owned variables have the same
+  // precedence and stay trustworthy for diagnostics.
+  hookEnv.AIR_HOOK_ID = id;
   // hooks.schema.json: x-config values support ${VAR}. This lands in an environment
   // variable handed to the hook process, never on disk.
   if (xConfig) hookEnv.AIR_HOOK_CONFIG = JSON.stringify(interpolateDeep(xConfig, env));
 
-  const match = buildAirMatch(definition.matcher, piEvent);
+  const match = buildAirMatch(definition.matcher, piEvent, warnings, id);
 
   return {
     name: id,
@@ -265,15 +309,20 @@ export function translateAirHook(
 export function isAirHooksIndex(parsed: unknown): boolean {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
   const record = parsed as Record<string, unknown>;
+  // The Pi-native superset is identified positively by its own keys.
   if (Array.isArray(record.hooks) || Array.isArray(record.extends)) return false;
   const entries = Object.entries(record).filter(([key]) => key !== "$schema");
   if (entries.length === 0) return false;
-  return entries.every(
-    ([, value]) =>
-      value !== null &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      typeof (value as AirHookEntry).path === "string",
+  // *Any* well-formed AIR entry makes this an AIR index. Requiring every entry to be
+  // well-formed would let a single typo (`pathh`) reclassify the file as the Pi-native
+  // format, which has no `hooks` array — so it would load zero hooks with zero errors
+  // and every guardrail in it would vanish without a word.
+  return entries.some(
+    (entry) =>
+      entry[1] !== null &&
+      typeof entry[1] === "object" &&
+      !Array.isArray(entry[1]) &&
+      typeof (entry[1] as AirHookEntry).path === "string",
   );
 }
 
@@ -339,7 +388,8 @@ function findHookIndexes(root: string, depth = 0): string[] {
   }
   const found: string[] = [];
   for (const name of entries) {
-    if (name === "node_modules" || name === ".pi" || name.startsWith(".git")) continue;
+    // `.github` is a plausible home for a shared catalog, so skip only `.git` itself.
+    if (name === "node_modules" || name === ".pi" || name === ".git") continue;
     const full = join(root, name);
     let isDir = false;
     try {
@@ -347,8 +397,17 @@ function findHookIndexes(root: string, depth = 0): string[] {
     } catch {
       continue;
     }
-    if (isDir) found.push(...findHookIndexes(full, depth + 1));
-    else if (name === "hooks.json") found.push(full);
+    if (isDir) {
+      found.push(...findHookIndexes(full, depth + 1));
+    } else if (name === "hooks.json") {
+      // A Pi-native hooks.json can sit inside a catalog tree; feeding it to the AIR
+      // loader would emit one bogus warning per key.
+      try {
+        if (isAirHooksIndex(JSON.parse(readFileSync(full, "utf8")))) found.push(full);
+      } catch {
+        // Unparseable here is reported by whoever actually loads it.
+      }
+    }
   }
   return found;
 }
@@ -395,11 +454,14 @@ export function discoverAirHookIndexes(airConfigPath: string, warnings: string[]
 export function discoverAirConfig(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
+  warnings: string[] = [],
 ): string | undefined {
   const override = env.PI_HOOKS_AIR;
   if (override) {
     const path = isAbsolute(override) ? override : resolve(cwd, override);
-    return existsSync(path) ? path : undefined;
+    if (existsSync(path)) return path;
+    warnings.push(`PI_HOOKS_AIR points at a missing file: ${path}`);
+    return undefined;
   }
   for (const candidate of [join(cwd, "air.json"), join(cwd, ".air", "air.json")]) {
     if (existsSync(candidate)) return candidate;

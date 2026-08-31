@@ -41,7 +41,7 @@ Exactly two pi packages, installable with `pi install npm:<package>`:
 
 | Package | What it does |
 |---|---|
-| [**`@tadasant/pi-hooks`**](packages/pi-hooks) | The Pi runtime for **AIR hooks**: `hooks.json` index + `HOOK.json` directories, run against Pi's lifecycle, where a non-zero exit blocks the event. Ships a small AIR catalog of guardrails, and a Pi-native superset config for what AIR's schema cannot express (a written block reason, rewriting tool input). |
+| [**`@tadasant/pi-hooks`**](packages/pi-hooks) | The Pi runtime for **AIR hooks**: `hooks.json` index + `HOOK.json` directories, run against Pi's lifecycle, where a non-zero exit blocks the event. Ships a small AIR catalog of guardrails (secret access, dangerous shell commands, session status), and a Pi-native superset config for what AIR's schema cannot express (a written block reason, rewriting tool input). |
 | [**`@tadasant/pi-plugins`**](packages/pi-plugins) | The Pi adapter for **AIR plugins**. Resolves an AIR plugin — including composition, `.plugin/plugin.json` manifests, and `default_in_roots` membership — and activates everything it bundles: skills through Pi's own skill loading, hooks through the bundled hooks engine, and MCP servers through [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter), a required peer. |
 
 Each package's README carries its full configuration reference.

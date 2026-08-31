@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   discoverConfigPaths,
@@ -19,6 +19,7 @@ beforeEach(() => {
 
 function write(name: string, body: unknown): string {
   const path = join(dir, name);
+  mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, typeof body === "string" ? body : JSON.stringify(body));
   return path;
 }
@@ -271,12 +272,34 @@ describe("hooksForEvent", () => {
   });
 });
 
+describe("an AIR index placed at .pi/hooks.json", () => {
+  it("loads through the normal config path", () => {
+    write("hooks/guard/HOOK.json", { event: "pre_tool_call", command: "node", args: ["./g.mjs"] });
+    const path = write("hooks.json", { guard: { description: "d", path: "hooks/guard" } });
+    const config = loadConfig([path]);
+    expect(config.errors).toEqual([]);
+    expect(config.hooks.map((h) => h.definition.name)).toEqual(["@local/guard"]);
+  });
+
+  it("keeps the good entries when one has a typo, rather than dropping the file", () => {
+    // Regression: requiring *every* entry to be well-formed let a single `pathh`
+    // reclassify the index as the Pi-native format — which has no `hooks` array — so
+    // it loaded zero hooks with zero errors and every guardrail vanished silently.
+    write("hooks/guard/HOOK.json", { event: "pre_tool_call", command: "node", args: ["./g.mjs"] });
+    const path = write("hooks.json", {
+      guard: { description: "d", path: "hooks/guard" },
+      typo: { description: "d", pathh: "hooks/other" },
+    });
+    const config = loadConfig([path]);
+    expect(config.hooks.map((h) => h.definition.name)).toEqual(["@local/guard"]);
+    expect(config.errors.join("\n")).toContain("typo");
+  });
+});
+
 describe("listBuiltinAirHooks", () => {
   it("reports the AIR hooks shipped in the tarball", () => {
     expect(listBuiltinAirHooks()).toEqual([
-      "block-destructive-bash",
-      "block-force-push",
-      "block-history-rewrite",
+      "block-dangerous-bash",
       "block-secret-access",
       "session-git-status",
     ]);

@@ -199,8 +199,32 @@ describe("matchers", () => {
       any: [{ tool: "/deploy.*production/i" }, { input: { command: "/deploy.*production/i" } }],
     });
     expect(buildAirMatch("deploy", "user_prompt")).toEqual({ prompt: "/deploy/i" });
-    expect(buildAirMatch("anything", "session_start")).toBeUndefined();
+    // session events carry a `reason`, which is the only data there is to filter on.
+    expect(buildAirMatch("resume", "session_start")).toEqual({ reason: "/resume/i" });
+    expect(buildAirMatch("quit", "session_shutdown")).toEqual({ reason: "/quit/i" });
     expect(buildAirMatch(undefined, "tool_call")).toBeUndefined();
+  });
+
+  it("warns rather than silently dropping a matcher on an event with no payload", () => {
+    const warnings: string[] = [];
+    expect(buildAirMatch("anything", "agent_settled", warnings, "@local/x")).toBeUndefined();
+    expect(warnings[0]).toContain("carries no data to match");
+  });
+
+  it("keeps a matcher that names a tool off the command, to avoid false refusals", () => {
+    // `write` must not also fire on `git write-tree` …
+    expect(buildAirMatch("write", "tool_call")).toEqual({ tool: "/write/i" });
+    expect(buildAirMatch("Bash", "tool_call")).toEqual({
+      any: [{ tool: "/Bash/i" }, { tool: "bash" }],
+    });
+    // … but a word that is not a tool name is a pattern over the command, which is
+    // what AIR's "matched against event data" means for a tool event.
+    expect(buildAirMatch("deploy", "tool_call")).toEqual({
+      any: [{ tool: "/deploy/i" }, { input: { command: "/deploy/i" } }],
+    });
+    expect(buildAirMatch("deploy.*prod", "tool_call")).toEqual({
+      any: [{ tool: "/deploy.*prod/i" }, { input: { command: "/deploy.*prod/i" } }],
+    });
   });
 
   it("matches Claude Code tool names, whose events this package already accepts", () => {
@@ -262,8 +286,10 @@ describe("air.json discovery", () => {
   });
 
   it("collects hook indexes from both the hooks array and walked catalogs", () => {
-    write("standalone/hooks.json", {});
-    write("catalog/nested/hooks.json", {});
+    // A walked hooks.json must look like an AIR index to be collected; a Pi-native
+    // one inside a catalog tree would otherwise produce a warning per key.
+    write("standalone/hooks.json", { a: { description: "d", path: "hooks/a" } });
+    write("catalog/nested/hooks.json", { b: { description: "d", path: "hooks/b" } });
     const config = write("air.json", {
       name: "x",
       hooks: ["./standalone/hooks.json"],

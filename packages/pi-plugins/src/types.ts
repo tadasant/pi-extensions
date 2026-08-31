@@ -97,17 +97,10 @@ export interface PluginManifest {
   keywords?: string[];
 }
 
-/** `<hook-dir>/HOOK.json` — an AIR hook's runtime definition. */
-export interface AirHookDefinition {
-  event: string;
-  command: string;
-  args?: string[];
-  env?: Record<string, string>;
-  timeout_seconds?: number;
-  /** Regex filtered against event data; the hook only fires when it matches. */
-  matcher?: string;
-  "x-config"?: Record<string, unknown>;
-}
+/**
+ * Note: the AIR hook runtime definition lives in `@tadasant/pi-hooks/src/air.ts`.
+ * This package imports `translateAirHook` from there rather than restating the shape.
+ */
 
 /** An artifact after qualification: AIR addresses everything as `@scope/id`. */
 export interface Artifact<T> {
