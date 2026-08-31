@@ -7,8 +7,8 @@
  */
 import { existsSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve as resolvePath } from "node:path";
+import { readHookJson, resolveHookDir, translateAirHook } from "@tadasant/pi-hooks/src/air.ts";
 import { AirError, discoverAirConfig, loadAirConfig, loadCatalogs } from "./catalog.ts";
-import { translateHook } from "./hooks-bridge.ts";
 import { findMcpAdapter, materializeMcpConfig, missingAdapterMessage } from "./mcp-bridge.ts";
 import { resolvePlugin, selectPlugins } from "./resolve.ts";
 import type {
@@ -162,9 +162,26 @@ function collectHooks(
       out.warnings.push(`plugin ${plugin.id}: bundled hook ${hookId} is not in any hooks index`);
       continue;
     }
+    // The AIR hooks format is implemented once, in @tadasant/pi-hooks. A plugin's
+    // `hooks[]` are AIR hook IDs, so resolving them against the catalog and handing
+    // the result to that package is the whole job — there is no second translation.
     let translated: TranslatedHook | undefined;
     try {
-      translated = translateHook(artifact, out.warnings, { env });
+      const dir = resolveHookDir(artifact.entry.path, artifact.source, artifact.id);
+      const definition = readHookJson(dir, artifact.id);
+      const piHook = translateAirHook(
+        {
+          id: artifact.id,
+          dir,
+          definition,
+          ...(artifact.entry["x-config"] ? { xConfigOverlay: artifact.entry["x-config"] } : {}),
+          env,
+        },
+        out.warnings,
+      );
+      translated = piHook
+        ? { airId: artifact.id, airEvent: definition.event, definition: piHook }
+        : undefined;
     } catch (error) {
       out.warnings.push((error as Error).message);
       continue;

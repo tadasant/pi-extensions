@@ -1,0 +1,28 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/hooks.schema.json",
+  "block-secret-access": {
+    "title": "Block Secret File Access",
+    "description": "Refuse to read, write, or print .env files, private keys, .netrc, and service-account JSON",
+    "path": "hooks/block-secret-access"
+  },
+  "block-force-push": {
+    "title": "Block Force Push",
+    "description": "Refuse git push --force without --force-with-lease, and pushes aimed at main/master/HEAD",
+    "path": "hooks/block-force-push"
+  },
+  "block-history-rewrite": {
+    "title": "Block History Rewrite",
+    "description": "Refuse git commands that irreversibly discard uncommitted work",
+    "path": "hooks/block-history-rewrite"
+  },
+  "block-destructive-bash": {
+    "title": "Block Destructive Bash",
+    "description": "Refuse recursive deletes of a root, curl-piped-to-shell, sudo, and destructive SQL",
+    "path": "hooks/block-destructive-bash"
+  },
+  "session-git-status": {
+    "title": "Session Git Status",
+    "description": "Report the repository's state at the start of a session",
+    "path": "hooks/session-git-status"
+  }
+}

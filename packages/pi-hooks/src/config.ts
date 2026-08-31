@@ -1,7 +1,13 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  discoverAirConfig,
+  discoverAirHookIndexes,
+  isAirHooksIndex,
+  loadAirHooksIndex,
+} from "./air.ts";
 import {
   HOOK_EVENTS,
   type HookDefinition,
@@ -12,27 +18,28 @@ import {
 } from "./types.ts";
 
 const PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PRESET_DIR = join(PACKAGE_ROOT, "presets");
+/**
+ * The AIR hooks catalog this package ships.
+ *
+ * Add it to an `air.json` as a catalog to adopt the guardrails:
+ * `{ "catalogs": ["./node_modules/@tadasant/pi-hooks/air"] }`
+ */
+export const BUILTIN_AIR_CATALOG = join(PACKAGE_ROOT, "air");
 
 export const CONFIG_FILENAMES = ["hooks.json", "hooks.jsonc"] as const;
 
-/** Names of the presets bundled with this package, for `/hooks` and error messages. */
-export function listPresets(): string[] {
+/** Ids of the AIR hooks bundled with this package, for `/hooks` and diagnostics. */
+export function listBuiltinAirHooks(): string[] {
   try {
-    // Presets are just a flat directory of .json files shipped in the tarball.
-    return readdirSync(PRESET_DIR)
-      .filter((name) => name.endsWith(".json"))
-      .map((name) => name.replace(/\.json$/, ""))
+    const index = JSON.parse(readFileSync(join(BUILTIN_AIR_CATALOG, "hooks.json"), "utf8"));
+    return Object.keys(index)
+      .filter((key) => key !== "$schema")
       .sort();
   } catch {
     return [];
   }
 }
 
-/**
- * Strip `//` and block comments so a `hooks.jsonc` can carry explanations.
- * String literals are respected, so a `//` inside a glob survives.
- */
 export function stripJsonComments(text: string): string {
   let out = "";
   let inString = false;
@@ -121,15 +128,6 @@ export function discoverConfigPaths(options: {
 }
 
 function resolveExtends(spec: string, fromDir: string): string {
-  if (spec.startsWith("preset:")) {
-    const name = spec.slice("preset:".length);
-    if (!/^[\w-]+$/.test(name)) throw new Error(`Invalid preset name: ${name}`);
-    const path = join(PRESET_DIR, `${name}.json`);
-    if (!existsSync(path)) {
-      throw new Error(`Unknown preset "${name}". Available: ${listPresets().join(", ")}`);
-    }
-    return path;
-  }
   if (isAbsolute(spec) || spec.startsWith(".")) return resolve(fromDir, spec);
   // Bare specifier: let Node resolution find it, first from the config's own
   // directory (a project's node_modules) and then from this package.
@@ -262,6 +260,19 @@ function loadOne(path: string, seen: Set<string>, out: LoadedConfig): void {
     return;
   }
 
+  // The same filename serves both formats: an AIR hooks index is a map of id ->
+  // { description, path }, while this package's own superset has a `hooks` array.
+  if (isAirHooksIndex(parsed)) {
+    const warnings: string[] = [];
+    const airHooks = loadAirHooksIndex(key, warnings);
+    out.errors.push(...warnings);
+    airHooks.forEach((definition, index) => {
+      out.hooks.push({ definition, source: key, index });
+    });
+    out.sources.push(key);
+    return;
+  }
+
   const extendsList = parsed.extends;
   if (extendsList !== undefined && !Array.isArray(extendsList)) {
     // A bare string here would otherwise be iterated character by character.
@@ -316,4 +327,27 @@ export function loadConfig(paths: string[]): LoadedConfig {
 
 export function hooksForEvent(config: LoadedConfig, event: HookEvent): LoadedHook[] {
   return config.hooks.filter((hook) => asArray(hook.definition.on).includes(event));
+}
+
+/**
+ * Load every AIR hook reachable from an `air.json`.
+ *
+ * This is the format AIR defines, and the one an AIR catalog ships. It is loaded
+ * alongside — and before — any Pi-native config, so a project can use AIR hooks alone.
+ */
+export function loadAirHooks(cwd: string, env: NodeJS.ProcessEnv = process.env): LoadedConfig {
+  const out: LoadedConfig = { hooks: [], sources: [], errors: [] };
+  const airConfig = discoverAirConfig(cwd, env);
+  if (!airConfig) return out;
+
+  const warnings: string[] = [];
+  for (const indexPath of discoverAirHookIndexes(airConfig, warnings)) {
+    const hooks = loadAirHooksIndex(indexPath, warnings, { env });
+    hooks.forEach((definition, index) => {
+      out.hooks.push({ definition, source: indexPath, index });
+    });
+    if (hooks.length > 0) out.sources.push(indexPath);
+  }
+  out.errors.push(...warnings);
+  return out;
 }

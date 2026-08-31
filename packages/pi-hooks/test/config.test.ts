@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   discoverConfigPaths,
   hooksForEvent,
-  listPresets,
+  listBuiltinAirHooks,
   loadConfig,
   stripJsonComments,
   validateHook,
@@ -146,19 +146,6 @@ describe("loadConfig", () => {
     expect(loadConfig([path]).hooks.map((h) => h.definition.name)).toEqual(["base", "own"]);
   });
 
-  it("resolves preset: references to the bundled presets", () => {
-    const path = write("hooks.json", { extends: ["preset:secrets"] });
-    const config = loadConfig([path]);
-    expect(config.errors).toEqual([]);
-    expect(config.hooks.length).toBeGreaterThan(0);
-    expect(config.hooks.every((h) => h.source.endsWith("secrets.json"))).toBe(true);
-  });
-
-  it("reports an unknown preset without throwing", () => {
-    const path = write("hooks.json", { extends: ["preset:nope"] });
-    expect(loadConfig([path]).errors[0]).toContain('Unknown preset "nope"');
-  });
-
   it("does not loop on circular extends", () => {
     write("a.json", { extends: ["./b.json"], hooks: [] });
     const b = write("b.json", { extends: ["./a.json"], hooks: [] });
@@ -284,10 +271,14 @@ describe("hooksForEvent", () => {
   });
 });
 
-describe("listPresets", () => {
-  it("reports the presets shipped in the tarball", () => {
-    expect(listPresets()).toEqual(
-      expect.arrayContaining(["secrets", "git-guard", "destructive-bash"]),
-    );
+describe("listBuiltinAirHooks", () => {
+  it("reports the AIR hooks shipped in the tarball", () => {
+    expect(listBuiltinAirHooks()).toEqual([
+      "block-destructive-bash",
+      "block-force-push",
+      "block-history-rewrite",
+      "block-secret-access",
+      "session-git-status",
+    ]);
   });
 });

@@ -9,7 +9,13 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { discoverConfigPaths, listPresets, loadConfig } from "../src/config.ts";
+import {
+  BUILTIN_AIR_CATALOG,
+  discoverConfigPaths,
+  listBuiltinAirHooks,
+  loadAirHooks,
+  loadConfig,
+} from "../src/config.ts";
 import type { HookOutcome } from "../src/runner.ts";
 import { HookRunner } from "../src/runner.ts";
 import type { LoadedConfig } from "../src/types.ts";
@@ -18,9 +24,23 @@ function agentDir(): string {
   return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 }
 
+/**
+ * Load AIR hooks first, then this package's own config.
+ *
+ * AIR hooks are the artifact format; the Pi-native config is a superset for the
+ * things Pi can do that AIR's schema has no vocabulary for (blocking with a written
+ * reason, rewriting tool input). Both end up as the same internal definition, run by
+ * the same dispatcher.
+ */
 function reload(cwd: string): LoadedConfig {
+  const air = loadAirHooks(cwd);
   const paths = discoverConfigPaths({ cwd, agentDir: agentDir() });
-  return loadConfig(paths);
+  const own = loadConfig(paths);
+  return {
+    hooks: [...air.hooks, ...own.hooks],
+    sources: [...air.sources, ...own.sources],
+    errors: [...air.errors, ...own.errors],
+  };
 }
 
 /** Extension logs go to stderr; Pi keeps stdout clean for `--mode json`. */
@@ -221,7 +241,8 @@ export default function piHooks(pi: ExtensionAPI): void {
           ? `Config: ${config.sources.join(", ")}`
           : "Config: none found (looked for .pi/hooks.json and $PI_CODING_AGENT_DIR/hooks.json)",
       );
-      lines.push(`Bundled presets: ${listPresets().join(", ") || "(none)"}`);
+      lines.push(`Bundled AIR hooks catalog: ${BUILTIN_AIR_CATALOG}`);
+      lines.push(`  hooks: ${listBuiltinAirHooks().join(", ") || "(none)"}`);
       if (config.hooks.length === 0) {
         lines.push("No hooks loaded.");
       } else {

@@ -42,7 +42,7 @@ pi-extensions/
 │   ├── pi-hooks/                # @tadasant/pi-hooks — the declarative hook runner
 │   │   ├── extensions/hooks.ts  #   Pi entry point: binds the runner to Pi's event bus
 │   │   ├── src/                 #   Pi-free core: config, matching, templating, actions, runner
-│   │   ├── presets/             #   Curated ready-made hook configs (`extends: ["preset:…"]`)
+│   │   ├── air/                 #   A shipped AIR hooks catalog (hooks.json + HOOK.json dirs)
 │   │   ├── schema/              #   JSON Schema for hooks.json
 │   │   └── test/                #   Unit tests (excluded from the published tarball)
 │   └── pi-plugins/              # @tadasant/pi-plugins — the AIR plugin adapter
@@ -54,7 +54,7 @@ pi-extensions/
 │   ├── fake-llm/server.ts       # The simulated localhost LLM API
 │   ├── fixtures/air/            # A real AIR catalog the plugins e2e suite plants and resolves
 │   ├── harness/                 # Pinned-Pi download check + runPi() subprocess driver
-│   └── tests/                   # hooks / presets / plugins e2e suites
+│   └── tests/                   # air-hooks / hooks / plugins e2e suites
 ├── scripts/                     # Pin guard, Pi installer, bundle prep, publish dry run
 └── .github/workflows/           # ci.yml (lint, unit, e2e, dry run) + release.yml (NPM_TOKEN)
 ```
@@ -72,9 +72,10 @@ pi-extensions/
   defeats. `scripts/prepare-bundled-deps.mjs` materializes it; it is wired as pi-plugins'
   `prepack` and run by the e2e global setup. Without it the published tarball would point
   at an extension path that does not exist.
-- **An AIR hook does not get its own runner.** `src/hooks-bridge.ts` translates a
-  `HOOK.json` into a `@tadasant/pi-hooks` definition, and `extensions/plugins.ts` drives
-  the same `HookRunner`. Building a second hook path here would be a regression.
+- **The AIR hooks format is implemented once, in `packages/pi-hooks/src/air.ts`.**
+  pi-plugins imports `translateAirHook` from there for the hooks a plugin bundles; it
+  has no bridge of its own. A second implementation would be a regression — that is
+  exactly the mistake an earlier revision made.
 - **pi-plugins resolves in its extension *factory*, not on `session_start`.**
   `pi-mcp-adapter` calls `loadMcpConfig()` when its own factory runs, so `.pi/mcp.json`
   has to be written before that. Moving this work to `session_start` would silently
@@ -111,9 +112,12 @@ missing on startup once the project is trusted.
 not invent a second one.** What Pi genuinely lacks is two things, and this repo publishes
 exactly one package for each.
 
-- **Hooks** — a *declarative* mapping from lifecycle events to actions, configured rather than
-  coded. The user writes config; a single extension reads it and dispatches. This is the Pi
-  analogue of a Claude Code hook, and there is no `hooks` concept anywhere in Pi's docs.
+- **Hooks** — specifically **AIR hooks**: a `hooks.json` index of `HOOK.json` directories,
+  binding a lifecycle event to a command, where a non-zero exit blocks the event. Pi has no
+  `hooks` concept at all, and AIR already specifies this artifact vendor-neutrally, so
+  `@tadasant/pi-hooks` is its Pi *runtime* rather than a new format. It also exposes a
+  Pi-native superset config for the two things AIR's schema cannot express — a written block
+  reason without a script, and rewriting a tool's input — but AIR hooks are the format.
   → `@tadasant/pi-hooks`.
 
 - **AIR plugins** — see below. → `@tadasant/pi-plugins`.
@@ -272,8 +276,9 @@ until `main` existed. That exception is spent — it does not extend to your wor
   real, and this repo fills both.
 
 - **Q: Can I add CI workflows / packages / tests?**
-  A: Yes. The scaffold has been built out — hook layer, presets, AIR plugin adapter,
-  pinned-Pi e2e harness, and CI all exist and are green. Extend them.
+  A: Yes. The scaffold has been built out — the AIR hooks runtime, a shipped AIR hooks
+  catalog, the AIR plugin adapter, the pinned-Pi e2e harness, and CI all exist and are
+  green. Extend them.
 
 - **Q: Why does `npm publish --dry-run` need a nested `npm pack` that scrubs the environment?**
   A: `npm publish --dry-run` exports `npm_config_dry_run=true`, which any nested npm command
@@ -299,11 +304,12 @@ until `main` existed. That exception is spent — it does not extend to your wor
   dropped by `extensions/hooks.ts` and the failure would vanish, so the runner logs
   instead.
 
-- **Q: A preset regex looks right but a bypass slipped through. How do I check?**
-  A: Add a row to `packages/pi-hooks/test/presets.test.ts`. Booting Pi per case is far
-  too slow for the combinatorics that matter here — flag orderings (`-rf` vs `-fr` vs
-  `-r -f`), quoting, `git -C <dir>` before the subcommand, and multi-line commands
-  (every command matcher needs the `m` flag, or `^` is string-start only).
+- **Q: A bundled AIR hook looks right but a bypass slipped through. How do I check?**
+  A: Add a row to `packages/pi-hooks/test/builtin-air-hooks.test.ts`, which spawns the
+  guard exactly as the runner does (event on stdin, exit code = verdict). Booting Pi
+  per case is far too slow for the combinatorics that matter — flag orderings (`-rf`
+  vs `-fr` vs `-r -f`), quoting, `git -C <dir>` before the subcommand, and multi-line
+  commands.
 
 - **Q: An e2e test needs to assert "no hook fired". What is the right signal?**
   A: `expect(result.stderr).not.toContain("[pi-hooks] blocked")`. Asserting the tool result
@@ -328,8 +334,4 @@ until `main` existed. That exception is spent — it does not extend to your wor
   dropped by `extensions/hooks.ts` and the failure would vanish, so the runner logs
   instead.
 
-- **Q: A preset regex looks right but a bypass slipped through. How do I check?**
-  A: Add a row to `packages/pi-hooks/test/presets.test.ts`. Booting Pi per case is far
-  too slow for the combinatorics that matter here — flag orderings (`-rf` vs `-fr` vs
-  `-r -f`), quoting, `git -C <dir>` before the subcommand, and multi-line commands
-  (every command matcher needs the `m` flag, or `^` is string-start only).
+

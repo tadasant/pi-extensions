@@ -13,7 +13,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { interpolate } from "./hooks-bridge.ts";
+import { interpolate } from "@tadasant/pi-hooks/src/air.ts";
 import type { McpEntry } from "./types.ts";
 
 /** The file `pi-mcp-adapter` reads as its project-scoped, pi-owned config. */

@@ -41,31 +41,27 @@ Exactly two pi packages, installable with `pi install npm:<package>`:
 
 | Package | What it does |
 |---|---|
-| [**`@tadasant/pi-hooks`**](packages/pi-hooks) | A declarative hook runner. `hooks.json` maps Pi lifecycle events (`session_start`, `tool_call`, `tool_result`, …) to actions, with the ability to block a tool call, rewrite its input, rewrite its result, or inject context. Ships five curated presets. |
+| [**`@tadasant/pi-hooks`**](packages/pi-hooks) | The Pi runtime for **AIR hooks**: `hooks.json` index + `HOOK.json` directories, run against Pi's lifecycle, where a non-zero exit blocks the event. Ships a small AIR catalog of guardrails, and a Pi-native superset config for what AIR's schema cannot express (a written block reason, rewriting tool input). |
 | [**`@tadasant/pi-plugins`**](packages/pi-plugins) | The Pi adapter for **AIR plugins**. Resolves an AIR plugin — including composition, `.plugin/plugin.json` manifests, and `default_in_roots` membership — and activates everything it bundles: skills through Pi's own skill loading, hooks through the bundled hooks engine, and MCP servers through [`pi-mcp-adapter`](https://github.com/nicobailon/pi-mcp-adapter), a required peer. |
 
 Each package's README carries its full configuration reference.
 
-## The hook layer in one example
+## AIR hooks in one example
 
-`.pi/hooks.json`:
+An AIR hook is an index entry plus a `HOOK.json`:
 
 ```json
-{
-  "extends": ["preset:secrets", "preset:git-guard"],
-  "hooks": [
-    {
-      "name": "no-migrations-without-review",
-      "on": "tool_call",
-      "match": { "tool": ["write", "edit"], "input": { "path": "db/migrate/**" } },
-      "action": { "type": "block", "reason": "Migrations are written by a human." }
-    }
-  ]
-}
+// hooks.json
+{ "block-prod-deploy": { "description": "Refuse production deploys", "path": "hooks/block-prod-deploy" } }
+```
+```json
+// hooks/block-prod-deploy/HOOK.json
+{ "event": "pre_tool_call", "matcher": "deploy.*production", "command": "./guard.sh" }
 ```
 
-No TypeScript, no extension to maintain. That is the whole point: Pi's `tool_call`
-subscription is the primitive, and this is the layer above it.
+Point Pi at the catalog with an `air.json` and the hook is live: a non-zero exit
+blocks the tool call, with stderr as the reason the model is given. No TypeScript, no
+extension to maintain, and the artifact is portable to any AIR-aware agent.
 
 ## AIR plugins in one example
 
@@ -120,7 +116,7 @@ trigger on tool use. Assertions run against Pi's own `--mode json` event stream,
 it matters — against the filesystem, to prove a blocked call had no side effect.
 
 ```bash
-npm test          # unit: hook matching/actions/presets, AIR resolution and translation
+npm test          # unit: AIR hooks + bundled catalog, matching/actions, plugin resolution
 npm run test:e2e  # e2e: the real pinned Pi binary, driven end to end
 ```
 
