@@ -33,7 +33,7 @@ already gives Pi MCP support as a Pi extension. Nothing in this repo re-implemen
 
 > **Status: implemented, not yet published.** Both packages, the test suite, and CI all
 > exist and are green. Publishing to npm is blocked on an `NPM_TOKEN` repository secret
-> that does not exist yet — see [Known prerequisite](#known-prerequisite-npm_token).
+> that a human has now added — see [Releasing](#releasing).
 
 ## What this publishes
 
@@ -122,20 +122,25 @@ npm run test:e2e  # e2e: the real pinned Pi binary, driven end to end
 
 `AGENTS.md` carries the reasoning and the constraints.
 
-## Known prerequisite: `NPM_TOKEN`
+## Releasing
 
-Publishing to npm requires an `NPM_TOKEN` repository secret, which is **not configured on this
-repository**. Until a human creates an npm automation token with publish rights on the
-`@tadasant` scope and adds it, `.github/workflows/release.yml` cannot publish — it fails fast
-with that message rather than half-publishing.
+Publishing to npm needs an `NPM_TOKEN` repository secret with publish rights on the
+`@tadasant` scope. **That secret is configured.** Pushing a `v*` tag runs
+`.github/workflows/release.yml`, which re-verifies everything (pin guard, lint,
+typecheck, unit, e2e) and then publishes both packages with npm provenance:
 
-Everything up to that line is verified without the credential: `npm run pack:dry-run` runs
-`npm publish --dry-run` for both packages and then asserts the resulting tarballs actually
-contain the resources their `pi` manifests promise. That job runs on every pull request.
-Build and test CI does not depend on the secret in any way. Agents should not attempt to
-create or obtain that credential.
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
 
-Once the token exists, tagging `v0.1.0` publishes both packages with npm provenance.
+`scripts/check-release-tag.mjs` refuses a tag that disagrees with the packages'
+declared versions, so a mistyped tag fails before anything is published.
+
+Every pull request also runs `npm run pack:dry-run`, which does `npm publish --dry-run`
+for both packages and then asserts the resulting tarballs actually contain the
+resources their `pi` manifests promise — the check that caught a `bundledDependencies`
+gap that would have shipped a tarball pointing at a nonexistent extension path. Build
+and test CI does not depend on the secret in any way.
 
 ## License
 

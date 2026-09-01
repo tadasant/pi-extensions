@@ -203,10 +203,16 @@ they do not substitute for the e2e suite.
 
 ## Publishing
 
-Packages are published to npm from CI. This requires an `NPM_TOKEN` repository secret, which is
-not configured on this repository. Build and test CI must not depend on it; only the release
-path may. If you are blocked because publishing needs that token, say
-so plainly and stop — do not attempt to create, obtain, or work around the credential.
+Packages are published to npm from CI, by pushing a `v*` tag. This requires an `NPM_TOKEN`
+repository secret, which **is** configured. Build and test CI must not depend on it; only the
+release path may. Never attempt to create, obtain, rotate, or print that credential — if the
+release path ever fails on authentication, say so plainly and stop.
+
+`main` is protected by a repository ruleset mirroring `tadasant/zimmer`: squash merges only,
+linear history, no force-push or deletion, and one required status check — `all-checks-pass`,
+the aggregate job at the end of `ci.yml`. Requiring that single check rather than enumerating
+jobs means adding or renaming a CI job never needs a settings change; it does mean a new job
+must be added to that job's `needs:` list or it will not gate anything.
 
 ## Core Principles
 
