@@ -89,3 +89,32 @@ jobs:
       # Proves the tarballs are well-formed without needing NPM_TOKEN. Publishing
       # itself lives in release.yml and is gated on that secret.
       - run: npm run pack:dry-run
+
+  # Single aggregate gate for the branch ruleset. `all-checks-pass` is the one required
+  # status check on `main`, instead of enumerating every job above — so adding or renaming
+  # a job never means editing repository settings. It `needs:` every job and re-derives a
+  # pass/fail from their results.
+  #
+  # `if: ${{ !cancelled() }}` rather than `always()`: a plain `needs:` job is *skipped* when
+  # a dependency fails, which would leave the required check perpetually pending — but
+  # `always()` would also run this on superseded runs, which `cancel-in-progress` cancels,
+  # turning a cancelled run into a failed one.
+  all-checks-pass:
+    name: all-checks-pass
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - unit
+      - e2e
+      - package
+    steps:
+      - name: Verify no required check failed or was cancelled
+        run: |
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::One or more required CI checks failed or were cancelled."
+            echo "Results: ${{ join(needs.*.result, ', ') }}"
+            exit 1
+          fi
+          echo "All required CI checks passed."
+          echo "Results: ${{ join(needs.*.result, ', ') }}"
