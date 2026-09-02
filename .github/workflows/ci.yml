@@ -18,16 +18,30 @@ name: CI
 #           || github.event.pull_request.head.repo.full_name == github.repository
 #
 #     A push, or a PR from a branch in this repo, runs. A PR from a fork SKIPS these
-#     jobs -- fork code never reaches the box -- and `all-checks-pass` below, which
-#     has no checkout step and no guard, lets the skips through so the one required
-#     check still reports. Together with the repo's fork-PR approval policy
-#     (`all_external_contributors`, a repo setting, not a workflow), this is the
-#     condition under which the runner owner serves a public repo at all. Do not
-#     remove the guard from a job, and do not add a checkout job without it.
+#     jobs, and `all-checks-pass` below, which has no checkout step and no guard,
+#     lets the skips through so the one required check still reports. The trade-off
+#     is deliberate: a fork PR is not tested by CI at all. This repo does not take
+#     outside PRs, so that costs nothing in practice.
+#
+#     The guard protects this file as written. On a `pull_request` event GitHub runs
+#     the workflow from the PR's merge ref, so a fork could also propose a ci.yml
+#     with the guard removed. What closes that is the repo's fork-PR approval policy
+#     (`all_external_contributors`, a repo setting, not a workflow): no workflow
+#     runs for an outside PR until a maintainer approves it, and the maintainer must
+#     read any change under `.github/workflows/` before clicking approve. The two
+#     together are the condition under which the runner owner serves a public repo
+#     at all. Do not remove the guard from a job, and do not add a checkout job
+#     without it.
 #
 #   - Two jobs from this repo can run concurrently on the same box, each in its own
-#     runner work directory. Nothing here may write to a shared absolute path; the
-#     e2e cache (`.e2e-cache`) is workspace-relative and the harness uses mkdtemp.
+#     runner work directory, and the box is persistent, so nothing here may leave
+#     state behind outside the workspace. The e2e cache (`.e2e-cache`) is
+#     workspace-relative; the test scratch directories come from mkdtemp under
+#     `TMPDIR`, which the jobs below point at `runner.temp` because the runner
+#     purges that directory per job and would never touch a stray `/tmp/pi-e2e-*`.
+#     The one shared absolute path is `~/.npm`, which `setup-node`'s npm cache
+#     restores into; npm's cache is content-addressed and built for concurrent
+#     writers, so that is tolerated rather than avoided.
 #
 # If you fork this repo, switch the jobs back to `ubuntu-latest`.
 on:
@@ -69,6 +83,8 @@ jobs:
     name: Unit tests
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: self-hosted
+    env:
+      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,6 +98,8 @@ jobs:
     name: E2E against pinned Pi
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: self-hosted
+    env:
+      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -107,6 +125,8 @@ jobs:
     name: Publish dry run
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: self-hosted
+    env:
+      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

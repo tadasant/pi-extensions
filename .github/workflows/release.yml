@@ -26,12 +26,15 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   verify:
     name: Verify before publishing
     runs-on: self-hosted
+    env:
+      # The runner purges `runner.temp` per job; a persistent box would otherwise
+      # accumulate the e2e suite's mkdtemp scratch directories under /tmp forever.
+      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -55,11 +58,18 @@ jobs:
     name: Publish to npm
     needs: verify
     # Deliberately ubuntu-latest, not self-hosted: `npm publish --provenance` mints a
-    # SLSA attestation from the GitHub OIDC token, which is a documented, supported
-    # path on GitHub-hosted runners and an untested one on ours. A release job that
-    # runs a couple of times a month is not worth the runner minutes it would save.
+    # SLSA attestation from the GitHub OIDC token, and npm's provenance documentation
+    # requires a cloud-hosted runner for it. A release job that runs a couple of
+    # times a month is not worth the runner minutes anyway.
     runs-on: ubuntu-latest
     environment: npm-publish
+    # `id-token: write` is what `npm publish --provenance` needs to mint its
+    # attestation. Granted here, to this job only, rather than workflow-wide: the
+    # `verify` job above runs arbitrary test subprocesses on a shared box and has no
+    # business holding an OIDC-minting permission.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

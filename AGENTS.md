@@ -56,7 +56,7 @@ pi-extensions/
 │   ├── harness/                 # Pinned-Pi download check + runPi() subprocess driver
 │   └── tests/                   # air-hooks / hooks / plugins e2e suites
 ├── scripts/                     # Pin guard, Pi installer, bundle prep, publish dry run
-└── .github/workflows/           # ci.yml (lint, unit, e2e, dry run) + release.yml (NPM_TOKEN)
+└── .github/workflows/           # ci.yml (lint, unit, e2e, dry run), release.yml (NPM_TOKEN), alert-ci-failure.yml (Slack)
 ```
 
 **Notes on the layout that are not obvious:**
@@ -213,6 +213,37 @@ linear history, no force-push or deletion, and one required status check — `al
 the aggregate job at the end of `ci.yml`. Requiring that single check rather than enumerating
 jobs means adding or renaming a CI job never needs a settings change; it does mean a new job
 must be added to that job's `needs:` list or it will not gate anything.
+
+## CI runs on a shared self-hosted runner pool
+
+`ci.yml` and the `verify` job of `release.yml` run on `runs-on: self-hosted` — two repo-level
+runners, `tadasant-pi-extensions-ci-1/2`, on a box shared with other tenants — the same
+arrangement as `tadasant/zimmer` and `tadasant/strad`. This repo is public, and a self-hosted
+runner on a public repo would otherwise execute any stranger's fork-PR code on that box, so
+the runner owner serves it on a condition (documented in `ci-runner/README.md` in
+`tadasant/tadasant-internal`, "Serving a public repo"):
+
+- **Every job that checks out code carries the fork guard**
+  `if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}`.
+  A fork PR skips those jobs; `all-checks-pass` has no checkout and no guard, treats `skipped`
+  as neither pass nor fail, and so still reports. The consequence is that a fork PR is not
+  tested by CI at all — deliberate, and free in practice because this repo does not take
+  outside PRs. **When you add a job to `ci.yml`, add the guard to it.** A checkout job without
+  it is the one thing that makes the repo unsafe on those runners; the checker
+  `ci-runner/scripts/check-fork-guard.py --local .github/workflows` in `tadasant-internal`
+  must exit 0.
+- **The repo's fork-PR approval policy is `all_external_contributors`** (a repo setting).
+  Co-equal with the guard: a fork could otherwise propose a `ci.yml` with the guard removed.
+- **The box is persistent and shared.** Nothing may leave state outside the workspace; the
+  jobs point `TMPDIR` at `runner.temp`, which the runner purges per job, so `mkdtemp` scratch
+  directories do not pile up under `/tmp`.
+
+`alert-ci-failure.yml` posts every main-branch workflow failure to `#alerts` in the Tadasant
+Slack. It is a verbatim copy of zimmer's listener and reads two repo secrets,
+`SLACK_BOT_TOKEN` and `SLACK_ALERTS_CHANNEL_ID`; keep it in sync with the sibling repos rather
+than editing it here alone. It runs on `ubuntu-latest` on purpose, so a broken runner pool can
+still be reported, and it only fires from the copy on `main` — a change to it does nothing
+until merged, and the smoke test is a post-merge `workflow_dispatch`.
 
 ## Core Principles
 
