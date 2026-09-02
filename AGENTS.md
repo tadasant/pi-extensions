@@ -235,7 +235,7 @@ the runner owner serves it on a condition (documented in `ci-runner/README.md` i
 - **The repo's fork-PR approval policy is `all_external_contributors`** (a repo setting).
   Co-equal with the guard: a fork could otherwise propose a `ci.yml` with the guard removed.
 - **The box is persistent and shared.** Nothing may leave state outside the workspace; the
-  jobs point `TMPDIR` at `runner.temp`, which the runner purges per job, so `mkdtemp` scratch
+  jobs point `TMPDIR` at `RUNNER_TEMP`, which the runner purges per job, so `mkdtemp` scratch
   directories do not pile up under `/tmp`.
 
 `alert-ci-failure.yml` posts every main-branch workflow failure to `#alerts` in the Tadasant

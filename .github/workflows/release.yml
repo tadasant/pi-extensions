@@ -31,12 +31,12 @@ jobs:
   verify:
     name: Verify before publishing
     runs-on: self-hosted
-    env:
-      # The runner purges `runner.temp` per job; a persistent box would otherwise
-      # accumulate the e2e suite's mkdtemp scratch directories under /tmp forever.
-      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
+      # The runner purges RUNNER_TEMP per job; a persistent box would otherwise
+      # accumulate the e2e suite's mkdtemp scratch directories under /tmp forever.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

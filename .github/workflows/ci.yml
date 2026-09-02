@@ -37,7 +37,7 @@ name: CI
 #     runner work directory, and the box is persistent, so nothing here may leave
 #     state behind outside the workspace. The e2e cache (`.e2e-cache`) is
 #     workspace-relative; the test scratch directories come from mkdtemp under
-#     `TMPDIR`, which the jobs below point at `runner.temp` because the runner
+#     `TMPDIR`, which the jobs below point at `RUNNER_TEMP` because the runner
 #     purges that directory per job and would never touch a stray `/tmp/pi-e2e-*`.
 #     The one shared absolute path is `~/.npm`, which `setup-node`'s npm cache
 #     restores into; npm's cache is content-addressed and built for concurrent
@@ -83,10 +83,13 @@ jobs:
     name: Unit tests
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: self-hosted
-    env:
-      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
+      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
+      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
+      # because the `runner` context is not available there.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -98,10 +101,13 @@ jobs:
     name: E2E against pinned Pi
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: self-hosted
-    env:
-      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
+      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
+      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
+      # because the `runner` context is not available there.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -125,10 +131,13 @@ jobs:
     name: Publish dry run
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: self-hosted
-    env:
-      TMPDIR: ${{ runner.temp }}
     steps:
       - uses: actions/checkout@v4
+      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
+      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
+      # because the `runner` context is not available there.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
