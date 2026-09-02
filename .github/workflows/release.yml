@@ -3,12 +3,17 @@ name: Release
 # Publishes the packages to npm.
 #
 # Requires an `NPM_TOKEN` repository secret (an npm automation token with publish
-# rights on the @tadasant scope). That secret is NOT configured on this repository
-# yet, so this workflow cannot publish until a human adds it — the job below fails
-# fast with that message rather than half-publishing. CI (build, lint, unit, e2e)
-# does not depend on the secret in any way.
+# rights on the @tadasant scope). If it is missing, the job below fails fast with
+# that message rather than half-publishing. CI (build, lint, unit, e2e) does not
+# depend on the secret in any way.
 #
 # Triggered by pushing a tag like `v0.1.0`, or manually with a dry-run option.
+#
+# `verify` runs on the shared self-hosted runner pool, like ci.yml and like the
+# release workflows in tadasant/zimmer and tadasant/strad. It needs no fork guard:
+# neither trigger here (a tag push, a manual dispatch) can be raised by an outside
+# contributor, so fork code cannot reach the box through this workflow. `publish`
+# stays on ubuntu-latest — see the comment on that job.
 on:
   push:
     tags: ["v*"]
@@ -21,14 +26,17 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
   verify:
     name: Verify before publishing
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      # The runner purges RUNNER_TEMP per job; a persistent box would otherwise
+      # accumulate the e2e suite's mkdtemp scratch directories under /tmp forever.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -49,8 +57,19 @@ jobs:
   publish:
     name: Publish to npm
     needs: verify
+    # Deliberately ubuntu-latest, not self-hosted: `npm publish --provenance` mints a
+    # SLSA attestation from the GitHub OIDC token, and npm's provenance documentation
+    # requires a cloud-hosted runner for it. A release job that runs a couple of
+    # times a month is not worth the runner minutes anyway.
     runs-on: ubuntu-latest
     environment: npm-publish
+    # `id-token: write` is what `npm publish --provenance` needs to mint its
+    # attestation. Granted here, to this job only, rather than workflow-wide: the
+    # `verify` job above runs arbitrary test subprocesses on a shared box and has no
+    # business holding an OIDC-minting permission.
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

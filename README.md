@@ -136,7 +136,7 @@ git tag v0.1.0 && git push origin v0.1.0
 `scripts/check-release-tag.mjs` refuses a tag that disagrees with the packages'
 declared versions, so a mistyped tag fails before anything is published.
 
-Every pull request also runs `npm run pack:dry-run`, which does `npm publish --dry-run`
+Every push to `main` and every same-repo pull request also runs `npm run pack:dry-run`, which does `npm publish --dry-run`
 for both packages and then asserts the resulting tarballs actually contain the
 resources their `pi` manifests promise — the check that caught a `bundledDependencies`
 gap that would have shipped a tarball pointing at a nonexistent extension path. Build

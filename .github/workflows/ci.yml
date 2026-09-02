@@ -4,8 +4,46 @@ name: CI
 #
 # The e2e job is the point of this repository's test strategy: it downloads the
 # pinned Pi CLI and drives the real binary against a simulated LLM on localhost.
-# It needs no secrets and makes no model-provider network calls, so it runs on
-# pull requests from forks exactly as it does here.
+# It needs no secrets and makes no model-provider network calls.
+#
+# Runs on the shared self-hosted GitHub Actions runner pool (label `self-hosted`,
+# runners `tadasant-pi-extensions-ci-*`) that this repo registers against, the same
+# arrangement as tadasant/zimmer and tadasant/strad. Two things follow from that:
+#
+#   - This repo is PUBLIC, and a self-hosted runner on a public repo would otherwise
+#     execute any stranger's fork-PR code on a box we do not own. So every job that
+#     checks out code carries the fork guard:
+#
+#       if: github.event_name == 'push'
+#           || github.event.pull_request.head.repo.full_name == github.repository
+#
+#     A push, or a PR from a branch in this repo, runs. A PR from a fork SKIPS these
+#     jobs, and `all-checks-pass` below, which has no checkout step and no guard,
+#     lets the skips through so the one required check still reports. The trade-off
+#     is deliberate: a fork PR is not tested by CI at all. This repo does not take
+#     outside PRs, so that costs nothing in practice.
+#
+#     The guard protects this file as written. On a `pull_request` event GitHub runs
+#     the workflow from the PR's merge ref, so a fork could also propose a ci.yml
+#     with the guard removed. What closes that is the repo's fork-PR approval policy
+#     (`all_external_contributors`, a repo setting, not a workflow): no workflow
+#     runs for an outside PR until a maintainer approves it, and the maintainer must
+#     read any change under `.github/workflows/` before clicking approve. The two
+#     together are the condition under which the runner owner serves a public repo
+#     at all. Do not remove the guard from a job, and do not add a checkout job
+#     without it.
+#
+#   - Two jobs from this repo can run concurrently on the same box, each in its own
+#     runner work directory, and the box is persistent, so nothing here may leave
+#     state behind outside the workspace. The e2e cache (`.e2e-cache`) is
+#     workspace-relative; the test scratch directories come from mkdtemp under
+#     `TMPDIR`, which the jobs below point at `RUNNER_TEMP` because the runner
+#     purges that directory per job and would never touch a stray `/tmp/pi-e2e-*`.
+#     The one shared absolute path is `~/.npm`, which `setup-node`'s npm cache
+#     restores into; npm's cache is content-addressed and built for concurrent
+#     writers, so that is tolerated rather than avoided.
+#
+# If you fork this repo, switch the jobs back to `ubuntu-latest`.
 on:
   pull_request:
     branches: [main]
@@ -25,7 +63,8 @@ env:
 jobs:
   lint:
     name: Lint and typecheck
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -42,9 +81,15 @@ jobs:
 
   unit:
     name: Unit tests
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
+      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
+      # because the `runner` context is not available there.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -54,9 +99,15 @@ jobs:
 
   e2e:
     name: E2E against pinned Pi
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
+      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
+      # because the `runner` context is not available there.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -78,9 +129,15 @@ jobs:
 
   package:
     name: Publish dry run
-    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
+      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
+      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
+      # because the `runner` context is not available there.
+      - name: Point TMPDIR at the per-job temp dir
+        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -95,14 +152,22 @@ jobs:
   # a job never means editing repository settings. It `needs:` every job and re-derives a
   # pass/fail from their results.
   #
-  # `if: ${{ !cancelled() }}` rather than `always()`: a plain `needs:` job is *skipped* when
-  # a dependency fails, which would leave the required check perpetually pending — but
-  # `always()` would also run this on superseded runs, which `cancel-in-progress` cancels,
-  # turning a cancelled run into a failed one.
+  # Three properties make it a correct gate:
+  #   1. `if: ${{ !cancelled() }}` rather than `always()`: a plain `needs:` job is *skipped*
+  #      when a dependency fails, which would leave the required check perpetually
+  #      pending — but `always()` would also run this on superseded runs, which
+  #      `cancel-in-progress` cancels, turning a cancelled run into a failed one and
+  #      tripping the CI-failure alert, which deliberately stays quiet on `cancelled`.
+  #   2. It fails on any dependency that reported `failure` or `cancelled`.
+  #   3. `skipped` dependencies do NOT fail it and are NOT counted as passes: every job
+  #      above carries the fork guard and reports `skipped` on a fork PR, so a fork PR
+  #      sees everything skip and this gate go green. It carries no fork guard itself,
+  #      which is fine precisely because it has NO checkout step — a fork PR never
+  #      executes fork code here. Keep it that way.
   all-checks-pass:
     name: all-checks-pass
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs:
       - lint
       - unit
@@ -116,5 +181,5 @@ jobs:
             echo "Results: ${{ join(needs.*.result, ', ') }}"
             exit 1
           fi
-          echo "All required CI checks passed."
+          echo "All required CI checks passed (skipped fork-guarded jobs are allowed)."
           echo "Results: ${{ join(needs.*.result, ', ') }}"
