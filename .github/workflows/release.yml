@@ -1,0 +1,84 @@
+name: Release
+
+# Publishes the packages to npm.
+#
+# Requires an `NPM_TOKEN` repository secret (an npm automation token with publish
+# rights on the @tadasant scope). That secret is NOT configured on this repository
+# yet, so this workflow cannot publish until a human adds it — the job below fails
+# fast with that message rather than half-publishing. CI (build, lint, unit, e2e)
+# does not depend on the secret in any way.
+#
+# Triggered by pushing a tag like `v0.1.0`, or manually with a dry-run option.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Pack and validate without publishing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    name: Verify before publishing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run check:pin
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Cache the pinned Pi install
+        uses: actions/cache@v4
+        with:
+          path: .e2e-cache
+          key: pi-cli-${{ hashFiles('e2e/pi-version.json') }}
+      - run: npm run pi:install
+      - run: npm run test:e2e
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Require the npm credential
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN}" ]; then
+            echo "::error::NPM_TOKEN is not configured on this repository, so nothing can be published."
+            echo "::error::Create an npm automation token with publish rights on the @tadasant scope and add it as the NPM_TOKEN repository secret."
+            exit 1
+          fi
+      - name: Check the tag matches the package versions
+        if: ${{ github.event_name == 'push' }}
+        run: node scripts/check-release-tag.mjs "${GITHUB_REF_NAME}"
+      - name: Dry run
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+        run: npm run pack:dry-run
+      - name: Publish
+        if: ${{ github.event_name == 'push' || inputs.dry_run == false }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm publish --workspace @tadasant/pi-hooks --provenance --access public
+          npm publish --workspace @tadasant/pi-plugins --provenance --access public

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/air.schema.json",
+  "name": "pi-e2e",
+  "description": "AIR configuration exercised by the pi-plugins e2e suite",
+  "catalogs": ["./catalog"]
+}

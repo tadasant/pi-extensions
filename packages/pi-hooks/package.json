@@ -1,0 +1,53 @@
+{
+  "name": "@tadasant/pi-hooks",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "AIR hooks for the Pi coding agent: run hooks.json/HOOK.json artifacts inside a Pi session, plus a Pi-native superset for what AIR cannot express",
+  "author": "tadasant",
+  "homepage": "https://github.com/tadasant/pi-extensions/tree/main/packages/pi-hooks",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tadasant/pi-extensions.git",
+    "directory": "packages/pi-hooks"
+  },
+  "bugs": {
+    "url": "https://github.com/tadasant/pi-extensions/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "air",
+    "ai-artifacts",
+    "hooks",
+    "extension"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/hooks.ts"
+    ]
+  },
+  "files": [
+    "extensions",
+    "src",
+    "air",
+    "schema",
+    "README.md",
+    "LICENSE"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.10"
+  }
+}

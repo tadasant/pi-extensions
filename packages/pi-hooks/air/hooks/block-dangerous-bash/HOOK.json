@@ -1,0 +1,7 @@
+{
+  "event": "pre_tool_call",
+  "matcher": "bash",
+  "command": "node",
+  "args": ["./guard.mjs"],
+  "timeout_seconds": 5
+}

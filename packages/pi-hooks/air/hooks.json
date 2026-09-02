@@ -1,0 +1,18 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/hooks.schema.json",
+  "block-secret-access": {
+    "title": "Block Secret File Access",
+    "description": "Refuse to read, write, or print .env files, private keys, .netrc, and service-account JSON",
+    "path": "hooks/block-secret-access"
+  },
+  "session-git-status": {
+    "title": "Session Git Status",
+    "description": "Report the repository's state at the start of a session",
+    "path": "hooks/session-git-status"
+  },
+  "block-dangerous-bash": {
+    "title": "Block Dangerous Bash",
+    "description": "Refuse irreversible deletes, unreviewed code execution, history rewrites, unsafe pushes, and destructive SQL",
+    "path": "hooks/block-dangerous-bash"
+  }
+}

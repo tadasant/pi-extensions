@@ -1,0 +1,63 @@
+{
+  "name": "@tadasant/pi-plugins",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "AIR plugin support for the Pi coding agent: resolve an AIR plugin and activate the skills, hooks, and MCP servers it bundles inside a Pi session",
+  "author": "tadasant",
+  "homepage": "https://github.com/tadasant/pi-extensions/tree/main/packages/pi-plugins",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tadasant/pi-extensions.git",
+    "directory": "packages/pi-plugins"
+  },
+  "bugs": {
+    "url": "https://github.com/tadasant/pi-extensions/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "air",
+    "ai-artifacts",
+    "plugins",
+    "mcp",
+    "extension"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/plugins.ts",
+      "node_modules/@tadasant/pi-hooks/extensions/hooks.ts"
+    ]
+  },
+  "files": [
+    "extensions",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "prepack": "node ../../scripts/prepare-bundled-deps.mjs"
+  },
+  "dependencies": {
+    "@tadasant/pi-hooks": "0.1.0"
+  },
+  "bundledDependencies": [
+    "@tadasant/pi-hooks"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "pi-mcp-adapter": ">=2.27.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=20.10"
+  }
+}

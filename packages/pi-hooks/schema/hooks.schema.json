@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/tadasant/pi-extensions/main/packages/pi-hooks/schema/hooks.schema.json",
+  "title": "pi-hooks configuration (Pi-native superset; AIR hook indexes use the AIR hooks schema)",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "extends": {
+      "type": "array",
+      "description": "Configs merged in before this file's own hooks: a relative path, or a Node-resolvable specifier. AIR hooks are declared in an air.json catalog instead, not here.",
+      "items": { "type": "string" }
+    },
+    "hooks": { "type": "array", "items": { "$ref": "#/definitions/hook" } }
+  },
+  "definitions": {
+    "pattern": {
+      "description": "A glob, or '/regex/flags'. A leading '!' negates.",
+      "oneOf": [{ "type": "string" }, { "type": "array", "items": { "type": "string" } }]
+    },
+    "matcher": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tool": { "$ref": "#/definitions/pattern" },
+        "input": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/definitions/pattern" }
+        },
+        "prompt": { "$ref": "#/definitions/pattern" },
+        "reason": { "$ref": "#/definitions/pattern" },
+        "isError": { "type": "boolean" },
+        "all": { "type": "array", "items": { "$ref": "#/definitions/matcher" } },
+        "any": { "type": "array", "items": { "$ref": "#/definitions/matcher" } },
+        "not": { "$ref": "#/definitions/matcher" }
+      }
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "session_start",
+        "session_shutdown",
+        "before_agent_start",
+        "agent_settled",
+        "user_prompt",
+        "tool_call",
+        "tool_result",
+        "user_bash"
+      ]
+    },
+    "hook": {
+      "type": "object",
+      "required": ["on", "action"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string" },
+        "on": {
+          "oneOf": [
+            { "$ref": "#/definitions/event" },
+            { "type": "array", "items": { "$ref": "#/definitions/event" } }
+          ]
+        },
+        "match": { "$ref": "#/definitions/matcher" },
+        "enabled": { "type": "boolean", "default": true },
+        "once": { "type": "boolean", "default": false },
+        "continueOnError": { "type": "boolean", "default": true },
+        "action": {
+          "oneOf": [
+            { "$ref": "#/definitions/blockAction" },
+            { "$ref": "#/definitions/notifyAction" },
+            { "$ref": "#/definitions/patchInputAction" },
+            { "$ref": "#/definitions/contextAction" },
+            { "$ref": "#/definitions/commandAction" }
+          ]
+        }
+      }
+    },
+    "blockAction": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "block" },
+        "reason": { "type": "string" },
+        "terminate": { "type": "boolean" }
+      }
+    },
+    "notifyAction": {
+      "type": "object",
+      "required": ["type", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "notify" },
+        "message": { "type": "string" },
+        "level": { "type": "string", "enum": ["info", "warning", "error"] }
+      }
+    },
+    "patchInputAction": {
+      "type": "object",
+      "required": ["type", "set"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "patch-input" },
+        "set": { "type": "object" }
+      }
+    },
+    "contextAction": {
+      "type": "object",
+      "required": ["type", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "context" },
+        "text": { "type": "string" },
+        "display": { "type": "boolean" }
+      }
+    },
+    "commandAction": {
+      "type": "object",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "const": "command" },
+        "command": { "type": "string" },
+        "argv": { "type": "array", "items": { "type": "string" } },
+        "cwd": { "type": "string" },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "timeoutMs": { "type": "integer", "minimum": 1 },
+        "blockOnFailure": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/skills.schema.json",
+  "repo-conventions": {
+    "title": "Repository Conventions",
+    "description": "The conventions this repository expects a change to follow",
+    "path": "skills/repo-conventions"
+  }
+}

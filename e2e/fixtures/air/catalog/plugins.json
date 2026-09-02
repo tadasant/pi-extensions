@@ -1,0 +1,8 @@
+{
+  "$schema": "https://raw.githubusercontent.com/pulsemcp/air/main/schemas/plugins.schema.json",
+  "code-quality": {
+    "description": "Repository conventions plus a guardrail against production deploys",
+    "path": "./plugins/code-quality",
+    "default_in_roots": ["*"]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "event": "pre_tool_call",
+  "command": "node",
+  "timeout_seconds": 5,
+  "x-config": {
+    "secretPaths": "\\.env($|\\.)|\\.pem$|\\.p12$|\\.pfx$|id_rsa|id_ed25519|\\.npmrc$|\\.netrc$|credentials$|serviceaccount.*\\.json$",
+    "allowPaths": "\\.env\\.(example|sample)$"
+  },
+  "args": ["./guard.mjs"]
+}

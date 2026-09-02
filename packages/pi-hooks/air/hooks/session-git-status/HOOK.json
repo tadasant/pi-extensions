@@ -1,0 +1,6 @@
+{
+  "event": "session_start",
+  "command": "node",
+  "timeout_seconds": 5,
+  "args": ["./report.mjs"]
+}

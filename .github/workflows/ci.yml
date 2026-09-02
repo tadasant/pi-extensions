@@ -1,0 +1,120 @@
+name: CI
+
+# Build, lint, and test on every pull request and every push to main.
+#
+# The e2e job is the point of this repository's test strategy: it downloads the
+# pinned Pi CLI and drives the real binary against a simulated LLM on localhost.
+# It needs no secrets and makes no model-provider network calls, so it runs on
+# pull requests from forks exactly as it does here.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  lint:
+    name: Lint and typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Verify the Pi version pin is exact and consistent
+        run: npm run check:pin
+      - name: Biome
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  e2e:
+    name: E2E against pinned Pi
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Cache the pinned Pi install
+        uses: actions/cache@v4
+        with:
+          path: .e2e-cache
+          key: pi-cli-${{ hashFiles('e2e/pi-version.json') }}
+      - name: Download the pinned Pi CLI
+        run: npm run pi:install
+      - name: Report the Pi version actually under test
+        run: node .e2e-cache/pi/$(node -p "require('./e2e/pi-version.json').version")/node_modules/@earendil-works/pi-coding-agent/dist/cli.js --version
+        env:
+          PI_OFFLINE: "1"
+          PI_SKIP_VERSION_CHECK: "1"
+      - run: npm run test:e2e
+
+  package:
+    name: Publish dry run
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      # Proves the tarballs are well-formed without needing NPM_TOKEN. Publishing
+      # itself lives in release.yml and is gated on that secret.
+      - run: npm run pack:dry-run
+
+  # Single aggregate gate for the branch ruleset. `all-checks-pass` is the one required
+  # status check on `main`, instead of enumerating every job above — so adding or renaming
+  # a job never means editing repository settings. It `needs:` every job and re-derives a
+  # pass/fail from their results.
+  #
+  # `if: ${{ !cancelled() }}` rather than `always()`: a plain `needs:` job is *skipped* when
+  # a dependency fails, which would leave the required check perpetually pending — but
+  # `always()` would also run this on superseded runs, which `cancel-in-progress` cancels,
+  # turning a cancelled run into a failed one.
+  all-checks-pass:
+    name: all-checks-pass
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    needs:
+      - lint
+      - unit
+      - e2e
+      - package
+    steps:
+      - name: Verify no required check failed or was cancelled
+        run: |
+          if ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}; then
+            echo "::error::One or more required CI checks failed or were cancelled."
+            echo "Results: ${{ join(needs.*.result, ', ') }}"
+            exit 1
+          fi
+          echo "All required CI checks passed."
+          echo "Results: ${{ join(needs.*.result, ', ') }}"
