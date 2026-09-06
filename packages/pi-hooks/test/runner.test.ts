@@ -689,6 +689,81 @@ describe("the Claude Code hook output object", () => {
     }
   });
 
+  /**
+   * A control object supersedes the exit code only when it DECIDED the event.
+   *
+   * Every key here leaves the disposition open — it annotates, it does not allow —
+   * so the hook's own non-zero exit still governs. Before this, printing any
+   * recognized key on stdout and exiting non-zero turned a hook that ERRORED into a
+   * hook that allowed, on exactly the blockable events a guardrail lives on.
+   */
+  it("lets a non-zero exit still block when the control object only annotated", async () => {
+    const annotations = [
+      { systemMessage: "heads up" },
+      { stopReason: "ran out" },
+      { hookSpecificOutput: { additionalContext: "note" } },
+      // The same shape predates the Claude dialect: `notify` had this hole too.
+      { notify: "fyi" },
+      { content: "rewritten" },
+    ];
+    for (const payload of annotations) {
+      const { runner } = makeRunner({
+        name: "annotating-but-failing",
+        on: "tool_call",
+        action: {
+          type: "command",
+          command: `printf %s ${JSON.stringify(JSON.stringify(payload))}; exit 2`,
+        },
+      });
+      const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+      expect(outcome.blocked, `exit 2 was swallowed by ${JSON.stringify(payload)}`).toBe(true);
+      // stdout is the control object; the model needs an explanation, not JSON.
+      expect(outcome.reason).not.toContain("{");
+      expect(outcome.reason).toContain("exit code 2");
+    }
+  });
+
+  it("keeps a deciding control object's own reason instead of the exit-code summary", async () => {
+    const { runner } = makeRunner({
+      name: "decided",
+      on: "tool_call",
+      action: {
+        type: "command",
+        command: `printf %s '{"decision":"block","reason":"policy says no"}'; exit 2`,
+      },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(true);
+    expect(outcome.reason).toBe("policy says no");
+  });
+
+  it("leaves an annotating control object alone when the hook exits 0", async () => {
+    const { runner } = printing({ notify: "fyi" });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(false);
+    expect(outcome.notifications[0]?.message).toBe("fyi");
+  });
+
+  it("still applies an annotation from a hook that failed on a non-blockable event", async () => {
+    const { runner, logs } = makeRunner({
+      name: "annotating-but-failing",
+      on: "tool_result",
+      action: {
+        type: "command",
+        command: `printf %s '{"hookSpecificOutput":{"additionalContext":"note"}}'; exit 2`,
+      },
+    });
+    const outcome = await runner.dispatch({
+      event: "tool_result",
+      toolName: "bash",
+      content: "done",
+    });
+    expect(outcome.blocked).toBe(false);
+    expect(rewriteToolResult(outcome, "done")).toBe("done\n\nnote");
+    // Nothing to veto here, so the failure is reported rather than swallowed.
+    expect(logs.join("\n")).toContain("exit code 2");
+  });
+
   it("records a stop request on an event Pi cannot stop from, and says so", async () => {
     const { runner, logs } = printing({ continue: false, stopReason: "stop now" }, "tool_result");
     const outcome = await runner.dispatch({

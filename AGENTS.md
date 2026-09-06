@@ -352,10 +352,18 @@ until `main` existed. That exception is spent — it does not extend to your wor
   runtime, which is the whole thing this package exists to avoid.
 
 - **Q: A `command` hook prints JSON and exits non-zero. Is that a control object?**
-  A: Only if the JSON carries a key this layer understands. Plenty of tools emit JSON
-  diagnostics and a non-zero exit (`eslint -f json`, `semgrep --json`); treating those
-  as control objects would cancel the exit-code semantics and make the hook silently
-  do nothing.
+  A: Only if the JSON carries a key this layer understands — and even then the exit
+  code still governs unless the object *decided* the event. Two separate guards, both
+  pointing the same way. First, plenty of tools emit JSON diagnostics and a non-zero
+  exit (`eslint -f json`, `semgrep --json`), so recognition needs a key this layer
+  acts on; `decision` and `continue` are ordinary English and are additionally gated
+  on their *value* (`"block"`, `false`), because a key that is recognized but inert is
+  the same hole wearing a hat. Second, a control object that merely annotated —
+  `notify`, `content`, `additionalContext`, `patchInput` — leaves the disposition
+  open, so the hook's own non-zero exit still blocks. Only `blocked` short-circuits
+  the exit-code path. Get this backwards and a hook that ERRORED reads as a hook that
+  allowed, which is a guardrail failing open on exactly the blockable events one
+  exists for.
 
 - **Q: Can a hook block on any event?**
   A: No — only `tool_call`, `user_bash`, and `user_prompt`, the ones Pi lets an

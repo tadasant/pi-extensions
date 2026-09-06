@@ -97,6 +97,10 @@ its own, in the same object. **A portable AIR hook needs no Pi-specific branch.*
 Either dialect, as one JSON object. Anything that is not JSON with a key this layer
 understands is ordinary output, so `echo hello` remains a perfectly good hook.
 
+**A control object does not cancel a non-zero exit unless it blocked.** One that only
+annotated leaves the question of whether to allow the event open, so the hook's own
+failure still answers it — a hook that errored must never read as a hook that allowed.
+
 | Claude Code / AIR | Pi-native | Effect |
 |---|---|---|
 | `{"decision":"block","reason":…}` | `{"block":true,"reason":…}` | Refuses the event where Pi allows a veto (`tool_call`, `user_bash`, `user_prompt`) |

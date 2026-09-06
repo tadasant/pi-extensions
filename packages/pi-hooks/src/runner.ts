@@ -345,14 +345,20 @@ export class HookRunner {
           cwd: this.deps.cwd,
           signal: this.deps.signal,
         });
-        if (result.control) {
-          this.applyControl(result.control, event, outcome, label);
-          return;
-        }
-        if (result.exitCode === 0) return;
+        if (result.control) this.applyControl(result.control, event, outcome, label);
+        // A control object supersedes the exit code only when it actually DECIDED
+        // the event — i.e. it blocked. One that merely annotated (`notify`,
+        // `content`, `additionalContext`, `patchInput`) leaves the disposition open,
+        // so the hook's own non-zero exit still governs it. Returning early for
+        // every control object is what let a key on stdout turn a hook that ERRORED
+        // into a hook that allowed, which is a guardrail failing open.
+        if (result.exitCode === 0 || outcome.blocked) return;
 
-        const detail =
-          result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
+        const detail = result.control
+          ? // stdout holds the control object; echoing that back would hand the
+            // model JSON where it needs an explanation.
+            result.stderr.trim() || `exit code ${result.exitCode}`
+          : result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`;
         const summary = result.timedOut
           ? `hook "${label}" timed out after ${action.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`
           : `hook "${label}": ${detail}`;
