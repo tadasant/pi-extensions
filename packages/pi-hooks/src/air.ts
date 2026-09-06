@@ -61,6 +61,28 @@ export const AIR_EVENT_MAP: Record<string, string> = {
   Stop: "agent_settled",
 };
 
+/**
+ * The Claude Code lifecycle name for each Pi event, as `hook_event_name`.
+ *
+ * AIR specifies no stdin schema for a hook: its reference adapter registers the
+ * hook with Claude Code, which supplies the payload. So the shape a portable AIR
+ * hook is written against is Claude Code's, and this map is what lets a hook
+ * recognize the event it was handed. `before_agent_start` is absent on purpose —
+ * it is Pi-native, no AIR event maps to it, so there is no Claude spelling to
+ * claim.
+ */
+export const CLAUDE_EVENT_NAMES: Record<string, string> = {
+  session_start: "SessionStart",
+  session_shutdown: "SessionEnd",
+  tool_call: "PreToolUse",
+  tool_result: "PostToolUse",
+  user_prompt: "UserPromptSubmit",
+  agent_settled: "Stop",
+  // Pi's user-run shell is a tool call the user made rather than the model; a hook
+  // vetoes it at the same point in the lifecycle, which is what PreToolUse names.
+  user_bash: "PreToolUse",
+};
+
 /** AIR events Pi has no equivalent for, each with the reason. */
 export const UNSUPPORTED_AIR_EVENTS: Record<string, string> = {
   pre_commit: "Pi has no git-commit lifecycle event",

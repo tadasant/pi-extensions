@@ -1,6 +1,6 @@
 {
   "name": "@tadasant/pi-hooks",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "description": "AIR hooks for the Pi coding agent: run hooks.json/HOOK.json artifacts inside a Pi session, plus a Pi-native superset for what AIR cannot express",

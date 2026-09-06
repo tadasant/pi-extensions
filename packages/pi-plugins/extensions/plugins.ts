@@ -23,7 +23,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HookOutcome } from "@tadasant/pi-hooks/src/runner.ts";
-import { HookRunner } from "@tadasant/pi-hooks/src/runner.ts";
+import { HookRunner, rewriteToolResult } from "@tadasant/pi-hooks/src/runner.ts";
 import type { LoadedConfig } from "@tadasant/pi-hooks/src/types.ts";
 import { activate } from "../src/activate.ts";
 import type { ActivationResult } from "../src/types.ts";
@@ -195,9 +195,8 @@ export default function piPlugins(pi: ExtensionAPI): void {
         content: text,
       });
       flushNotifications(outcome, ctx);
-      if (typeof outcome.content === "string") {
-        return { content: [{ type: "text", text: outcome.content }] };
-      }
+      const rewritten = rewriteToolResult(outcome, text);
+      if (rewritten !== undefined) return { content: [{ type: "text", text: rewritten }] };
       return undefined;
     }),
   );

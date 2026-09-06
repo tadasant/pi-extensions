@@ -97,6 +97,70 @@ describe("bundled hooks", () => {
     expectCleanRun(result);
     expect(result.stderr).not.toContain("[pi-plugins] blocked");
   });
+
+  /**
+   * A plugin's hooks run on `@tadasant/pi-hooks`' runner, imported rather than
+   * reimplemented — so the payload a bundled hook is handed, and the dialect its
+   * answer is read in, have to be the same ones a directly-selected hook gets.
+   * They are two extension entry points over one engine, and only a test that
+   * exercises this path proves the second one was wired up too.
+   */
+  it("hands a bundled hook the portable payload and acts on its Claude-dialect answer", async () => {
+    const result = await runWithAir({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo git push origin main" } },
+        { type: "text", text: "ok" },
+      ],
+      prompt: "push it",
+      files: {
+        "catalog/hooks/push-reminder/HOOK.json": JSON.stringify({
+          event: "post_tool_call",
+          matcher: "Bash",
+          command: "node",
+          args: ["./guard.mjs"],
+        }),
+        "catalog/hooks/push-reminder/guard.mjs": [
+          "const chunks = [];",
+          "for await (const chunk of process.stdin) chunks.push(chunk);",
+          "const event = JSON.parse(chunks.join('') || '{}');",
+          "if (event.hook_event_name !== 'PostToolUse') process.exit(0);",
+          "if (!/git push/.test(event.tool_input?.command ?? '')) process.exit(0);",
+          "console.log(JSON.stringify({ hookSpecificOutput: {",
+          "  hookEventName: 'PostToolUse', additionalContext: 'BUNDLED-HOOK-REMINDER',",
+          "} }));",
+        ].join("\n"),
+        // Re-declare the fixture catalog's hook index and plugin manifest with the
+        // extra hook in them, rather than editing the shared fixture: the other
+        // cases in this file assert on exactly what that fixture ships.
+        "catalog/hooks.json": JSON.stringify({
+          "block-prod-deploy": {
+            title: "Block Production Deploys",
+            description: "Refuse any command that would deploy straight to production",
+            path: "hooks/block-prod-deploy",
+            "x-config": { environment: "production" },
+          },
+          "push-reminder": {
+            title: "Push Reminder",
+            description: "Remind the agent to confirm CI after a push",
+            path: "hooks/push-reminder",
+          },
+        }),
+        "catalog/plugins/code-quality/.plugin/plugin.json": JSON.stringify({
+          name: "code-quality",
+          title: "Code Quality Suite",
+          version: "1.2.0",
+          skills: [],
+          mcp_servers: [],
+          hooks: ["block-prod-deploy", "push-reminder"],
+        }),
+      },
+    });
+    expectCleanRun(result);
+    const [call] = toolResults(result);
+    expect(call?.text).toContain("BUNDLED-HOOK-REMINDER");
+    expect(call?.text).toContain("git push origin main");
+    expect(JSON.stringify(result.llm.requests)).toContain("BUNDLED-HOOK-REMINDER");
+  });
 });
 
 describe("MCP composition", () => {
