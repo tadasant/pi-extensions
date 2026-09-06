@@ -103,7 +103,7 @@ understands is ordinary output, so `echo hello` remains a perfectly good hook.
 | `{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":…}}` | — | The same, spelled the way `PreToolUse` spells it |
 | `{"hookSpecificOutput":{"additionalContext":…}}` | — | Text for the model: appended to the tool result on `tool_result`, injected as context on `before_agent_start` |
 | `{"continue":false,"stopReason":…}` | `{"block":true,"terminate":true,"reason":…}` | Refuses the event and asks Pi to end the agent loop |
-| `{"systemMessage":…}` | `{"notify":…}` | Shown in the Pi UI |
+| `{"systemMessage":…}` | `{"notify":…}` | Shown in the Pi UI, at `warning` level rather than `notify`'s `info` |
 | — | `{"content":…}` | *Replaces* the tool result |
 | — | `{"patchInput":{"a.b":…}}` | Rewrites the tool input before the tool runs |
 
@@ -111,8 +111,15 @@ On `tool_result`, `content` substitutes and `additionalContext` adds — a hook 
 only wants to annotate a result should use the latter, so the command's own output
 still reaches the model. A `decision: "block"` on `post_tool_call` cannot undo a call
 that already ran (it cannot on Claude Code either), so its `reason` is appended to the
-result instead of being dropped. Where an event has no channel for added text at all,
-the runner logs it by hook name rather than swallowing it.
+result instead of being dropped.
+
+Two limits Pi's API imposes, both reported on stderr by hook name rather than
+swallowed. **`additionalContext` has a channel only on `post_tool_call` and
+`before_agent_start`** — notably *not* on `user_prompt_submit`, because Pi's input
+handler can accept or refuse a prompt but cannot add to it. And **ending the agent
+loop works only from `pre_tool_call`**, the one veto Pi gives an extension a
+`terminate` flag on; elsewhere `continue: false` still refuses the event and its
+`stopReason` still reaches the model, but the loop carries on.
 
 ### Event mapping
 

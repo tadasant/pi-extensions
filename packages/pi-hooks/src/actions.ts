@@ -76,10 +76,20 @@ const CONTROL_KEYS = [
   "hookSpecificOutput",
 ] as const;
 
-/** Generic-sounding keys, admitted only when the value is one this layer honours. */
+/**
+ * Generic-sounding keys, admitted only when the value is one this layer ACTS ON.
+ *
+ * Not merely "a value of the right type": recognizing a control object supersedes
+ * the exit code, so a key that is recognized but inert would silently cancel a
+ * hook's non-zero exit and let a guardrail fail open. `continue` only means
+ * anything when it is `false`, and `decision` only when it is `"block"` — so those
+ * are the only values that count. `{"continue":true}` or `{"decision":"approve"}`
+ * says "carry on", which is also what an unrecognized object says, and leaving
+ * them out keeps the exit code authoritative.
+ */
 const AMBIGUOUS_CONTROL_KEYS: Record<string, (value: unknown) => boolean> = {
-  decision: (value) => value === "block" || value === "approve",
-  continue: (value) => typeof value === "boolean",
+  decision: (value) => value === "block",
+  continue: (value) => value === false,
 };
 
 export function parseControl(stdout: string): CommandControl | undefined {

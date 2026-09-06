@@ -668,6 +668,41 @@ describe("the Claude Code hook output object", () => {
     expect(outcome.terminate).toBeUndefined();
   });
 
+  /**
+   * The hazard behind the value gate, exercised where it actually bites.
+   * Recognizing a control object supersedes the exit code, so a diagnostic that
+   * merely carries an inert `continue` / `decision` must not cancel a hook's
+   * non-zero exit and let a guardrail on a blockable event fail open.
+   */
+  it("still blocks on a non-zero exit when the JSON only carries an inert control key", async () => {
+    for (const payload of [{ continue: true, violations: 3 }, { decision: "approve" }]) {
+      const { runner } = makeRunner({
+        name: "linty",
+        on: "tool_call",
+        action: {
+          type: "command",
+          command: `printf %s ${JSON.stringify(JSON.stringify(payload))}; exit 2`,
+        },
+      });
+      const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+      expect(outcome.blocked, `exit 2 was swallowed for ${JSON.stringify(payload)}`).toBe(true);
+    }
+  });
+
+  it("records a stop request on an event Pi cannot stop from, and says so", async () => {
+    const { runner, logs } = printing({ continue: false, stopReason: "stop now" }, "tool_result");
+    const outcome = await runner.dispatch({
+      event: "tool_result",
+      toolName: "bash",
+      content: "done",
+    });
+    // Previously computed and then dropped by the non-blockable early return.
+    expect(outcome.terminate).toBe(true);
+    expect(outcome.blocked).toBe(false);
+    expect(rewriteToolResult(outcome, "done")).toBe("done\n\nstop now");
+    expect(logs.join("\n")).toContain("Pi only allows from tool_call");
+  });
+
   it("surfaces systemMessage as a warning notification", async () => {
     const { runner } = printing({ systemMessage: "hook config is stale" });
     const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });

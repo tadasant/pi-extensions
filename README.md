@@ -103,7 +103,7 @@ pi install npm:@tadasant/pi-plugins
 ## Testing philosophy
 
 The test suite that matters here is **end-to-end against real Pi**. E2E tests download a
-**pinned** version of the Pi coding agent CLI (`e2e/pi-version.json`, currently `0.84.2`) and
+**pinned** version of the Pi coding agent CLI (`e2e/pi-version.json`, currently `0.84.4`) and
 drive that binary for real, with the model provider pointed at a **simulated LLM API on
 localhost** that returns well-formed placeholder responses. No vendor API key, no network
 egress to a model provider, and no mocking of Pi itself — the thing under test is whether a

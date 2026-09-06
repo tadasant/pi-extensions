@@ -270,6 +270,22 @@ export class HookRunner {
       control.stopReason ??
       outcome.reason;
 
+    // Recorded before the non-blockable early return below, which used to drop it:
+    // `continue: false` sets both flags, so a hook asking to stop on `tool_result`
+    // had its stop request computed and then thrown away.
+    if (terminate) {
+      outcome.terminate = true;
+      // `terminate` rides along with a veto, and `tool_call` is the only handler
+      // Pi gives one to. Anywhere else the flag is a faithful record of what the
+      // hook asked for and nothing more, which is worth a line rather than silence.
+      if (event.event !== "tool_call") {
+        this.log(
+          `hook "${label}": asked to end the agent loop, which Pi only allows from tool_call — ` +
+            `recorded but not acted on for ${event.event}`,
+        );
+      }
+    }
+
     if (wantsBlock && !BLOCKABLE_EVENTS.includes(event.event)) {
       // Claude Code's PostToolUse `block` does not undo the call either — it
       // "prompts Claude with reason". Pi cannot veto here at all, and setting
@@ -284,7 +300,6 @@ export class HookRunner {
       outcome.blocked = true;
       outcome.reason = reason;
     }
-    if (terminate) outcome.terminate = true;
   }
 
   private async apply(
