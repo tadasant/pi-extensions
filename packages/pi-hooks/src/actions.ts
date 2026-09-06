@@ -63,6 +63,12 @@ const CONTROL_KEYS = [
   "content",
   "context",
   "notify",
+  // Claude Code's hook output object — the dialect an AIR hook answers in.
+  "decision",
+  "continue",
+  "stopReason",
+  "systemMessage",
+  "hookSpecificOutput",
 ] as const;
 
 export function parseControl(stdout: string): CommandControl | undefined {

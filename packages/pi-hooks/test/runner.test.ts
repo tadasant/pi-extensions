@@ -9,13 +9,26 @@ import {
   parseControl,
   runCommandAction,
 } from "../src/actions.ts";
-import { HookRunner } from "../src/runner.ts";
+import type { HookOutcome } from "../src/runner.ts";
+import { HookRunner, rewriteToolResult } from "../src/runner.ts";
 import type { HookDefinition, LoadedConfig } from "../src/types.ts";
 
 let dir: string;
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "pi-hooks-runner-"));
 });
+
+/** A blank outcome, for asserting on rewriteToolResult without dispatching. */
+function emptyOutcomeForTest(): HookOutcome {
+  return {
+    blocked: false,
+    context: [],
+    contextDisplay: false,
+    appended: [],
+    notifications: [],
+    ran: [],
+  };
+}
 
 function configOf(...definitions: HookDefinition[]): LoadedConfig {
   return {
@@ -443,5 +456,200 @@ describe("error handling", () => {
     await expect(
       runner.dispatch({ event: "tool_call", toolName: "bash", input: {} }),
     ).rejects.toThrow();
+  });
+});
+
+/**
+ * The AIR hook contract, which is Claude Code's.
+ *
+ * AIR defines no stdin or stdout schema for a hook — its reference adapter registers
+ * hooks with Claude Code, which supplies both — so a hook written once for the AIR
+ * ecosystem reads `tool_input` and answers with `hookSpecificOutput`. Speaking only
+ * the Pi-native dialect made such a hook load, match, spawn, read `undefined` from
+ * every field, and exit 0 with nothing to say.
+ */
+describe("the portable AIR/Claude Code dialect", () => {
+  /** Capture what a hook actually receives, by echoing its stdin back as `content`. */
+  async function payloadFor(event: Parameters<HookRunner["dispatch"]>[0]) {
+    const script = join(dir, "echo-payload.mjs");
+    writeFileSync(
+      script,
+      [
+        "const chunks = [];",
+        "for await (const chunk of process.stdin) chunks.push(chunk);",
+        "console.log(JSON.stringify({ content: chunks.join('') }));",
+      ].join("\n"),
+    );
+    const { runner } = makeRunner({
+      name: "echo",
+      on: event.event,
+      action: { type: "command", argv: [process.execPath, script] },
+    });
+    const outcome = await runner.dispatch(event);
+    return JSON.parse(outcome.content ?? "{}");
+  }
+
+  it("sends Claude Code's field names alongside the Pi-native ones", async () => {
+    const payload = await payloadFor({
+      event: "tool_result",
+      toolName: "bash",
+      input: { command: "git push origin main" },
+      content: "Everything up-to-date",
+    });
+    expect(payload.hook_event_name).toBe("PostToolUse");
+    expect(payload.tool_name).toBe("bash");
+    expect(payload.tool_input).toEqual({ command: "git push origin main" });
+    expect(payload.tool_response).toBe("Everything up-to-date");
+    // The Pi-native names a hooks.json templates against are still there.
+    expect(payload.event).toBe("tool_result");
+    expect(payload.toolName).toBe("bash");
+    expect(payload.input).toEqual({ command: "git push origin main" });
+  });
+
+  it("names a tool_call PreToolUse, with no tool_response to speak of", async () => {
+    const payload = await payloadFor({
+      event: "tool_call",
+      toolName: "write",
+      input: { path: "a" },
+    });
+    expect(payload.hook_event_name).toBe("PreToolUse");
+    expect(payload.tool_input).toEqual({ path: "a" });
+    expect("tool_response" in payload).toBe(false);
+  });
+
+  it("spells a session_start reason `source`, as Claude Code does", async () => {
+    const payload = await payloadFor({ event: "session_start", reason: "startup" });
+    expect(payload.hook_event_name).toBe("SessionStart");
+    expect(payload.source).toBe("startup");
+    expect(payload.reason).toBe("startup");
+  });
+
+  it("claims no Claude name for before_agent_start, which is Pi's alone", async () => {
+    const payload = await payloadFor({ event: "before_agent_start", prompt: "hi" });
+    expect("hook_event_name" in payload).toBe(false);
+    expect(payload.prompt).toBe("hi");
+  });
+});
+
+describe("the Claude Code hook output object", () => {
+  /** A hook whose whole job is to print one control object and exit 0. */
+  function printing(control: unknown, on: HookDefinition["on"] = "tool_call") {
+    return makeRunner({
+      name: "claude-dialect",
+      on,
+      action: { type: "command", command: `printf %s ${JSON.stringify(JSON.stringify(control))}` },
+    });
+  }
+
+  it("treats `decision: block` as a veto, with `reason`", async () => {
+    const { runner } = printing({ decision: "block", reason: "not without review" });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(true);
+    expect(outcome.reason).toBe("not without review");
+  });
+
+  it("treats `permissionDecision: deny` as a veto, with its own reason field", async () => {
+    const { runner } = printing({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "policy",
+      },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(true);
+    expect(outcome.reason).toBe("policy");
+  });
+
+  it("leaves `permissionDecision: allow` alone", async () => {
+    const { runner } = printing({
+      hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" },
+    });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(false);
+  });
+
+  it("stops the agent loop on `continue: false`, using stopReason", async () => {
+    const { runner } = printing({ continue: false, stopReason: "budget spent" });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.terminate).toBe(true);
+    // Pi has no bare "stop" lever: a terminate with nothing blocked is dropped.
+    expect(outcome.blocked).toBe(true);
+    expect(outcome.reason).toBe("budget spent");
+  });
+
+  it("appends additionalContext to a tool result rather than replacing it", async () => {
+    const { runner } = printing(
+      { hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: "REMINDER" } },
+      "tool_result",
+    );
+    const outcome = await runner.dispatch({
+      event: "tool_result",
+      toolName: "bash",
+      content: "original output",
+    });
+    expect(outcome.appended).toEqual(["REMINDER"]);
+    expect(outcome.content).toBeUndefined();
+    expect(rewriteToolResult(outcome, "original output")).toBe("original output\n\nREMINDER");
+  });
+
+  it("routes additionalContext to the injected message on before_agent_start", async () => {
+    const { runner } = printing(
+      { hookSpecificOutput: { additionalContext: "CONVENTIONS" } },
+      "before_agent_start",
+    );
+    const outcome = await runner.dispatch({ event: "before_agent_start", prompt: "hi" });
+    expect(outcome.context).toEqual(["CONVENTIONS"]);
+  });
+
+  it("says so when an event has no channel for additional context", async () => {
+    const { runner, logs } = printing(
+      { hookSpecificOutput: { additionalContext: "nowhere to put this" } },
+      "session_start",
+    );
+    const outcome = await runner.dispatch({ event: "session_start", reason: "startup" });
+    expect(outcome.context).toEqual([]);
+    expect(logs.join("\n")).toContain("additional context dropped");
+  });
+
+  it("surfaces a PostToolUse block reason, which Pi has no way to veto", async () => {
+    const { runner } = printing(
+      { decision: "block", reason: "that was not reviewed" },
+      "tool_result",
+    );
+    const outcome = await runner.dispatch({
+      event: "tool_result",
+      toolName: "bash",
+      content: "done",
+    });
+    // Claude Code's PostToolUse block does not undo the call either; it prompts the
+    // model with the reason. Setting `blocked` here would be dropped without a word.
+    expect(outcome.blocked).toBe(false);
+    expect(rewriteToolResult(outcome, "done")).toBe("done\n\nthat was not reviewed");
+  });
+
+  it("surfaces systemMessage as a warning notification", async () => {
+    const { runner } = printing({ systemMessage: "hook config is stale" });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.notifications).toEqual([{ message: "hook config is stale", level: "warning" }]);
+  });
+});
+
+describe("rewriteToolResult", () => {
+  it("leaves the result alone when no hook touched it", () => {
+    expect(rewriteToolResult(emptyOutcomeForTest(), "untouched")).toBeUndefined();
+  });
+
+  it("lets a replacement win, then appends onto it", () => {
+    const outcome = emptyOutcomeForTest();
+    outcome.content = "[redacted]";
+    outcome.appended = ["and a note"];
+    expect(rewriteToolResult(outcome, "secret")).toBe("[redacted]\n\nand a note");
+  });
+
+  it("drops empty parts rather than emitting blank lines", () => {
+    const outcome = emptyOutcomeForTest();
+    outcome.appended = ["a note"];
+    expect(rewriteToolResult(outcome, "")).toBe("a note");
   });
 });

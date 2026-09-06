@@ -329,6 +329,28 @@ until `main` existed. That exception is spent — it does not extend to your wor
   from whatever JSON a `command` hook printed on stdout, and the second of those is
   not something the user authored.
 
+- **Q: What shape does a hook actually receive on stdin, and answer in?**
+  A: Both dialects, in one object. AIR specifies *no* stdin or stdout schema — its
+  reference adapter registers hooks with Claude Code, which supplies both — so a
+  portable AIR hook reads `hook_event_name` / `tool_name` / `tool_input` /
+  `tool_response` and answers with `decision` / `hookSpecificOutput`. The Pi-native
+  names (`event`, `toolName`, `input`, `content`; `block` / `content` / `patchInput`)
+  ship alongside them and are what a Pi-native `hooks.json` templates against. Sending
+  only the Pi-native half is what made a real AIR hook load, match its tool, spawn its
+  process, read `undefined` from every field it looked at, and exit 0 with nothing to
+  say — a silent no-op indistinguishable from a hook that never fired. If you add an
+  event or a field, add both spellings.
+
+- **Q: A hook wants to tell the model something after a tool ran. Which key?**
+  A: `hookSpecificOutput.additionalContext`, which is *appended* to the tool result.
+  `content` **replaces** it, so a hook that only wanted to annotate a result and
+  reached for `content` has to echo the original output back or the model never sees
+  what the command actually printed. `additionalContext` and a `post_tool_call`
+  `decision: "block"` reason both take the appending route. Plain non-JSON stdout is
+  *not* injected — Claude Code shows it in the transcript only, and inventing a
+  channel Claude does not have would make one hook body behave differently per
+  runtime, which is the whole thing this package exists to avoid.
+
 - **Q: A `command` hook prints JSON and exits non-zero. Is that a control object?**
   A: Only if the JSON carries a key this layer understands. Plenty of tools emit JSON
   diagnostics and a non-zero exit (`eslint -f json`, `semgrep --json`); treating those

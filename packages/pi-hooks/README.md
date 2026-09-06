@@ -75,6 +75,45 @@ looks for `air.json`, then `.air/air.json`; `PI_HOOKS_AIR` overrides it.
 Oversized values are truncated in the environment variables, so a hook inspecting a
 large payload should read stdin.
 
+#### The stdin payload speaks both dialects
+
+AIR specifies no stdin schema for a hook: its reference adapter registers the hook
+with Claude Code, which supplies the payload. So a hook written once for the AIR
+ecosystem reads Claude Code's field names — and this package sends them alongside
+its own, in the same object. **A portable AIR hook needs no Pi-specific branch.**
+
+| Claude Code / AIR | Pi-native | Present on |
+|---|---|---|
+| `hook_event_name` (`PreToolUse`, `PostToolUse`, `SessionStart`, …) | `event` | every event except `before_agent_start`, which is Pi's alone |
+| `tool_name` | `toolName` | `tool_call`, `tool_result`, `user_bash` |
+| `tool_input` | `input` | same |
+| `tool_response` (the result as text) | `content` | `tool_result` |
+| `prompt` | `prompt` | `user_prompt`, `before_agent_start` |
+| `source` | `reason` | `session_start` |
+| `cwd` | `cwd` | every event |
+
+#### What a hook may print on stdout
+
+Either dialect, as one JSON object. Anything that is not JSON with a key this layer
+understands is ordinary output, so `echo hello` remains a perfectly good hook.
+
+| Claude Code / AIR | Pi-native | Effect |
+|---|---|---|
+| `{"decision":"block","reason":…}` | `{"block":true,"reason":…}` | Refuses the event where Pi allows a veto (`tool_call`, `user_bash`, `user_prompt`) |
+| `{"hookSpecificOutput":{"permissionDecision":"deny","permissionDecisionReason":…}}` | — | The same, spelled the way `PreToolUse` spells it |
+| `{"hookSpecificOutput":{"additionalContext":…}}` | — | Text for the model: appended to the tool result on `tool_result`, injected as context on `before_agent_start` |
+| `{"continue":false,"stopReason":…}` | `{"block":true,"terminate":true,"reason":…}` | Refuses the event and asks Pi to end the agent loop |
+| `{"systemMessage":…}` | `{"notify":…}` | Shown in the Pi UI |
+| — | `{"content":…}` | *Replaces* the tool result |
+| — | `{"patchInput":{"a.b":…}}` | Rewrites the tool input before the tool runs |
+
+On `tool_result`, `content` substitutes and `additionalContext` adds — a hook that
+only wants to annotate a result should use the latter, so the command's own output
+still reaches the model. A `decision: "block"` on `post_tool_call` cannot undo a call
+that already ran (it cannot on Claude Code either), so its `reason` is appended to the
+result instead of being dropped. Where an event has no channel for added text at all,
+the runner logs it by hook name rather than swallowing it.
+
 ### Event mapping
 
 AIR's vocabulary is agent-agnostic and broader than Pi's surface:
@@ -143,9 +182,6 @@ AIR's `HOOK.json` can run a command and block on its exit code. Pi can do more t
 that, and this package exposes the extra in its own config file — a superset, not a
 replacement. Reach for it when you need a block **reason** without writing a script,
 or need to rewrite a tool's input:
-
-The `$schema` below describes the superset only — an AIR index at the same path is
-validated by [AIR's own hooks schema](https://github.com/pulsemcp/air/blob/main/schemas/hooks.schema.json).
 
 The `$schema` below describes this superset only — an AIR index placed at the same
 path validates against [AIR's hooks schema](https://github.com/pulsemcp/air/blob/main/schemas/hooks.schema.json)

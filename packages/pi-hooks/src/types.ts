@@ -113,7 +113,16 @@ export type HookAction =
   | ContextAction
   | CommandAction;
 
-/** The JSON a `command` action may print on stdout to steer Pi. */
+/**
+ * The JSON a `command` action may print on stdout to steer Pi.
+ *
+ * Two dialects are understood, and a hook may use either. The first block is this
+ * package's Pi-native vocabulary. The second is Claude Code's hook output object,
+ * which is the dialect an AIR hook answers in: AIR defines no output schema of its
+ * own, and its reference adapter hands hooks to Claude Code — so a hook body that
+ * is portable across AIR runtimes speaks Claude's. Understanding both is what lets
+ * one hook run unmodified on Claude Code and on Pi.
+ */
 export interface CommandControl {
   block?: boolean;
   reason?: string;
@@ -126,6 +135,23 @@ export interface CommandControl {
   context?: string;
   /** Message surfaced in the Pi UI. */
   notify?: string;
+
+  /** Claude Code: `"block"` refuses the event, with `reason` explaining why. */
+  decision?: string;
+  /** Claude Code: `false` stops the agent loop, with `stopReason` as the message. */
+  continue?: boolean;
+  stopReason?: string;
+  /** Claude Code: a warning shown to the user. */
+  systemMessage?: string;
+  /** Claude Code: the per-event half of the output object. */
+  hookSpecificOutput?: {
+    hookEventName?: string;
+    /** Text the hook wants the model to read. */
+    additionalContext?: string;
+    /** PreToolUse: `"deny"` refuses the call. */
+    permissionDecision?: string;
+    permissionDecisionReason?: string;
+  };
 }
 
 export interface HookDefinition {

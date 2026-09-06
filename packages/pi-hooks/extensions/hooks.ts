@@ -17,7 +17,7 @@ import {
   loadConfig,
 } from "../src/config.ts";
 import type { HookOutcome } from "../src/runner.ts";
-import { HookRunner } from "../src/runner.ts";
+import { HookRunner, rewriteToolResult } from "../src/runner.ts";
 import type { LoadedConfig } from "../src/types.ts";
 
 function agentDir(): string {
@@ -206,9 +206,8 @@ export default function piHooks(pi: ExtensionAPI): void {
         content: text,
       });
       flushNotifications(outcome, ctx);
-      if (typeof outcome.content === "string") {
-        return { content: [{ type: "text", text: outcome.content }] };
-      }
+      const rewritten = rewriteToolResult(outcome, text);
+      if (rewritten !== undefined) return { content: [{ type: "text", text: rewritten }] };
       return undefined;
     }),
   );

@@ -1,6 +1,6 @@
 {
   "name": "@tadasant/pi-plugins",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "description": "AIR plugin support for the Pi coding agent: resolve an AIR plugin and activate the skills, hooks, and MCP servers it bundles inside a Pi session",
@@ -40,7 +40,7 @@
     "prepack": "node ../../scripts/prepare-bundled-deps.mjs"
   },
   "dependencies": {
-    "@tadasant/pi-hooks": "0.1.0"
+    "@tadasant/pi-hooks": "0.2.0"
   },
   "bundledDependencies": [
     "@tadasant/pi-hooks"

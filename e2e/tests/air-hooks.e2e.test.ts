@@ -204,3 +204,153 @@ describe("a hand-written AIR hook", () => {
     expect(result.stderr).toContain("Pi has no git-commit lifecycle event");
   });
 });
+
+/**
+ * An AIR hook written once for the ecosystem, running unmodified on Pi.
+ *
+ * AIR specifies no stdin or stdout schema for a hook. Its reference adapter
+ * registers the hook with Claude Code, which supplies the payload and reads the
+ * response — so the contract a *portable* AIR hook is written against is Claude
+ * Code's: `hook_event_name` / `tool_name` / `tool_input` / `tool_response` in,
+ * `hookSpecificOutput` / `decision` out. The reference catalog
+ * (pulsemcp/ai-artifacts) declares exactly that stdin interface.
+ *
+ * Before the payload carried those names, such a hook loaded, matched its tool,
+ * spawned its process — and read `undefined` for every field it looked at, so it
+ * exited 0 with nothing to say. Loaded, dispatched, and silently inert, which from
+ * the session's point of view is identical to a hook that never fired at all.
+ *
+ * These cases therefore assert the hook's EFFECT — the tool result the model reads,
+ * and the block Pi actually applies. A "loaded 1 hook(s)" assertion passes against
+ * the broken build.
+ */
+describe("an AIR hook written in the portable (Claude Code) dialect", () => {
+  const REMINDER = "CI REMINDER: confirm CI is green before reporting the work done.";
+
+  /** Reads the payload the way a hook shipped for Claude Code reads it. */
+  const portableGuard = (body: string[]) =>
+    [
+      "const chunks = [];",
+      "for await (const chunk of process.stdin) chunks.push(chunk);",
+      "const event = JSON.parse(chunks.join('') || '{}');",
+      ...body,
+    ].join("\n");
+
+  it("reads tool_input from the payload and its additionalContext reaches the model", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo git push origin main" } },
+        { type: "text", text: "ok" },
+      ],
+      prompt: "push it",
+      files: customCatalog(
+        { event: "post_tool_call", matcher: "Bash", command: "node", args: ["./guard.mjs"] },
+        portableGuard([
+          // Every one of these three fields is Claude Code's spelling, and every one
+          // was absent from the payload before this package spoke that dialect.
+          "if (event.hook_event_name !== 'PostToolUse') process.exit(0);",
+          "if (String(event.tool_name).toLowerCase() !== 'bash') process.exit(0);",
+          "if (!/git push/.test(event.tool_input?.command ?? '')) process.exit(0);",
+          "if (!/git push/.test(event.tool_response ?? '')) process.exit(0);",
+          "console.log(JSON.stringify({ hookSpecificOutput: {",
+          "  hookEventName: 'PostToolUse',",
+          `  additionalContext: ${JSON.stringify(REMINDER)},`,
+          "} }));",
+        ]),
+      ),
+    });
+    expectCleanRun(result);
+
+    const [call] = toolResults(result);
+    expect(call?.text).toContain(REMINDER);
+    // `additionalContext` ADDS; the command's own output is what the model asked for
+    // and a hook that only wanted to annotate it must not have swallowed it.
+    expect(call?.text).toContain("git push origin main");
+    // The strongest assertion available: it reached a request to the model.
+    expect(JSON.stringify(result.llm.requests)).toContain(REMINDER);
+  });
+
+  it("stays quiet on a tool call it does not match, leaving the result untouched", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo building" } },
+        { type: "text", text: "done" },
+      ],
+      prompt: "build it",
+      files: customCatalog(
+        { event: "post_tool_call", matcher: "Bash", command: "node", args: ["./guard.mjs"] },
+        portableGuard([
+          "if (!/git push/.test(event.tool_input?.command ?? '')) process.exit(0);",
+          "console.log(JSON.stringify({ hookSpecificOutput: { additionalContext: 'nope' } }));",
+        ]),
+      ),
+    });
+    expectCleanRun(result);
+    // Byte-for-byte the command's own output, trailing newline included.
+    expect(toolResults(result)[0]?.text).toBe("building\n");
+  });
+
+  it("denies a tool call with permissionDecision, and Pi refuses it", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "./deploy.sh production" } },
+        { type: "text", text: "understood" },
+      ],
+      prompt: "ship it",
+      files: customCatalog(
+        { event: "pre_tool_call", matcher: "deploy", command: "node", args: ["./guard.mjs"] },
+        portableGuard([
+          "if (event.hook_event_name !== 'PreToolUse') process.exit(0);",
+          "console.log(JSON.stringify({ hookSpecificOutput: {",
+          "  hookEventName: 'PreToolUse',",
+          "  permissionDecision: 'deny',",
+          "  permissionDecisionReason: `refused: ${event.tool_input.command}`,",
+          "} }));",
+        ]),
+      ),
+    });
+    expectCleanRun(result);
+    const [call] = toolResults(result);
+    expect(call?.isError).toBe(true);
+    expect(call?.text).toContain("refused: ./deploy.sh production");
+  });
+
+  it("blocks a tool call with a bare `decision`, exiting 0", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "rm -rf ./build" } },
+        { type: "text", text: "understood" },
+      ],
+      prompt: "clean",
+      files: customCatalog(
+        { event: "pre_tool_call", command: "node", args: ["./guard.mjs"] },
+        portableGuard([
+          "console.log(JSON.stringify({ decision: 'block', reason: 'not without review' }));",
+        ]),
+      ),
+    });
+    expectCleanRun(result);
+    expect(toolResults(result)[0]?.isError).toBe(true);
+    expect(toolResults(result)[0]?.text).toContain("not without review");
+  });
+
+  it("surfaces a PostToolUse block reason, which Pi cannot veto, to the model anyway", async () => {
+    const result = await runPi({
+      script: [
+        { type: "tool", tool: "bash", args: { command: "echo deployed" } },
+        { type: "text", text: "ok" },
+      ],
+      prompt: "deploy",
+      files: customCatalog(
+        { event: "post_tool_call", command: "node", args: ["./guard.mjs"] },
+        portableGuard([
+          "console.log(JSON.stringify({ decision: 'block', reason: 'that was not reviewed' }));",
+        ]),
+      ),
+    });
+    expectCleanRun(result);
+    const [call] = toolResults(result);
+    expect(call?.text).toContain("that was not reviewed");
+    expect(call?.text).toContain("deployed");
+  });
+});
