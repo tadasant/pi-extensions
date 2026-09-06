@@ -654,6 +654,20 @@ describe("the Claude Code hook output object", () => {
     expect(rewriteToolResult(outcome, "done")).toBe("done\n\nthat was not reviewed");
   });
 
+  it("keeps blocking on a truthy non-boolean `block`, rather than failing open", async () => {
+    const { runner } = printing({ block: "yes", reason: "still a block" });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(true);
+    expect(outcome.reason).toBe("still a block");
+  });
+
+  it("does not treat a bare `continue: true` as anything", async () => {
+    const { runner } = printing({ continue: true });
+    const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });
+    expect(outcome.blocked).toBe(false);
+    expect(outcome.terminate).toBeUndefined();
+  });
+
   it("surfaces systemMessage as a warning notification", async () => {
     const { runner } = printing({ systemMessage: "hook config is stale" });
     const outcome = await runner.dispatch({ event: "tool_call", toolName: "bash", input: {} });

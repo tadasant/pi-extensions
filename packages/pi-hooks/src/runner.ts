@@ -256,8 +256,12 @@ export class HookRunner {
     // bare "stop" an extension can pull, and a terminate with nothing blocked is
     // dropped by extensions/hooks.ts.
     const halt = control.continue === false;
-    const wantsBlock = control.block === true || control.decision === "block" || denied || halt;
-    const terminate = control.terminate === true || halt;
+    // `block` and `terminate` stay truthy tests, not `=== true`: narrowing them
+    // would make a guardrail that printed `{"block":"yes"}` start failing OPEN,
+    // which is the one direction a change here must never go. `continue` is the
+    // opposite case and is strict — only an explicit `false` means halt.
+    const wantsBlock = Boolean(control.block) || control.decision === "block" || denied || halt;
+    const terminate = Boolean(control.terminate) || halt;
     if (!wantsBlock && !terminate) return;
 
     const reason =
