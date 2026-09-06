@@ -57,6 +57,32 @@ describe("parseControl", () => {
     expect(parseControl("{ not json }")).toBeUndefined();
     expect(parseControl("")).toBeUndefined();
   });
+
+  it("parses Claude Code's hook output object", () => {
+    expect(parseControl('{"decision":"block","reason":"no"}')).toEqual({
+      decision: "block",
+      reason: "no",
+    });
+    expect(parseControl('{"continue":false,"stopReason":"done"}')).toEqual({
+      continue: false,
+      stopReason: "done",
+    });
+    expect(parseControl('{"hookSpecificOutput":{"additionalContext":"x"}}')).toEqual({
+      hookSpecificOutput: { additionalContext: "x" },
+    });
+  });
+
+  /**
+   * Recognizing a control object supersedes the exit code, so a diagnostic that
+   * merely happens to use one of these words must not cancel a hook's non-zero
+   * exit. `decision` and `continue` are ordinary English; the specific spellings
+   * are not, which is why only these two are value-gated.
+   */
+  it("does not mistake a JSON diagnostic for a control object", () => {
+    expect(parseControl('{"results":[],"errors":2}')).toBeUndefined();
+    expect(parseControl('{"decision":"pending-human-review"}')).toBeUndefined();
+    expect(parseControl('{"continue":"next-page","items":[]}')).toBeUndefined();
+  });
 });
 
 describe("hookEnv", () => {

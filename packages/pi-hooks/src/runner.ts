@@ -59,8 +59,8 @@ function emptyOutcome(): HookOutcome {
  * reached the session directly or bundled inside a plugin.
  */
 export function rewriteToolResult(outcome: HookOutcome, original: string): string | undefined {
-  const base = typeof outcome.content === "string" ? outcome.content : original;
   if (outcome.appended.length === 0) return outcome.content;
+  const base = typeof outcome.content === "string" ? outcome.content : original;
   return [base, ...outcome.appended].filter((part) => part.length > 0).join("\n\n");
 }
 

@@ -51,9 +51,15 @@ export function hookEnv(context: Record<string, unknown>): Record<string, string
 }
 
 /**
- * A `command` action's stdout may be a JSON control object. Anything that is not
- * parseable JSON is treated as ordinary output rather than an error, so
- * `echo hello` remains a perfectly good hook.
+ * Keys whose mere presence marks a `command` action's stdout as a control object.
+ *
+ * Anything that is not parseable JSON carrying one of these is treated as ordinary
+ * output rather than an error, so `echo hello` remains a perfectly good hook.
+ *
+ * `decision` and `continue` are deliberately NOT here: they are ordinary English
+ * words that a tool's JSON diagnostics could plausibly carry, and recognizing a
+ * control object supersedes the exit code. They are admitted by
+ * `AMBIGUOUS_CONTROL_KEYS` below only when they also hold a value this layer acts on.
  */
 const CONTROL_KEYS = [
   "block",
@@ -63,13 +69,18 @@ const CONTROL_KEYS = [
   "content",
   "context",
   "notify",
-  // Claude Code's hook output object — the dialect an AIR hook answers in.
-  "decision",
-  "continue",
+  // Claude Code's hook output object — the dialect an AIR hook answers in. These
+  // three spellings are specific enough to stand on their own.
   "stopReason",
   "systemMessage",
   "hookSpecificOutput",
 ] as const;
+
+/** Generic-sounding keys, admitted only when the value is one this layer honours. */
+const AMBIGUOUS_CONTROL_KEYS: Record<string, (value: unknown) => boolean> = {
+  decision: (value) => value === "block" || value === "approve",
+  continue: (value) => typeof value === "boolean",
+};
 
 export function parseControl(stdout: string): CommandControl | undefined {
   const trimmed = stdout.trim();
@@ -81,7 +92,13 @@ export function parseControl(stdout: string): CommandControl | undefined {
     // `semgrep --json`). Treating that as a control object would cancel the
     // exit-code semantics and make the hook silently do nothing, so require at
     // least one key this layer actually understands.
-    if (!CONTROL_KEYS.some((key) => key in parsed)) return undefined;
+    const record = parsed as Record<string, unknown>;
+    const recognized =
+      CONTROL_KEYS.some((key) => key in record) ||
+      Object.entries(AMBIGUOUS_CONTROL_KEYS).some(
+        ([key, accepts]) => key in record && accepts(record[key]),
+      );
+    if (!recognized) return undefined;
     return parsed as CommandControl;
   } catch {
     return undefined;
