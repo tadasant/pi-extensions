@@ -1,7 +1,8 @@
 name: CI failure alert
 
-# Posts every failure of a pushed ref in this repo -- `main`, and the `v*` release
-# tags -- to #alerts in the Tadasant Slack.
+# Posts CI failures in this repo to #alerts in the Tadasant Slack: anything triggered
+# by a `git push` (so `main`, and the `v*` release tags -- but any pushed ref,
+# including a feature branch), plus anything on `main` that was not a pull request.
 #
 # One listener for the whole repo, rather than an alert job bolted onto each of the
 # other workflows. `workflows: ["*"]` matches EVERY workflow in the repo, so a
@@ -11,14 +12,14 @@ name: CI failure alert
 #
 # tadasant/zimmer and tadasant/strad carry this listener under the identical secret
 # names, and it started life as a verbatim copy of theirs. It is NO LONGER verbatim,
-# deliberately, in exactly one place: the `if:` below gates on the triggering EVENT
-# (`workflow_run.event == 'push'`) where the sibling copies gate on the BRANCH NAME
-# (`head_branch == 'main'`). The reason is local to this repo -- `release.yml` here
-# fires on `push: tags: ["v*"]`, and a tag-triggered run carries the TAG in
-# `head_branch` (`v0.2.0`), never `main`, so a branch-name gate could never alert on
-# a failed release. zimmer and strad release from a push to `main` and do not have
-# the problem. Keep the rest of the file in sync with them and change it together;
-# treat that one clause, and the comment block on it, as this repo's own.
+# deliberately, in exactly one place: the `if:` below alerts on a triggering run whose
+# EVENT is `push`, IN ADDITION TO the sibling copies' branch-name test. The reason is
+# local to this repo -- `release.yml` here fires on `push: tags: ["v*"]`, and a
+# tag-triggered run carries the TAG in `head_branch` (`v0.2.0`), never `main`, so the
+# branch-name test alone could never alert on a failed release. zimmer and strad
+# release from a push to `main` and do not have the problem. Keep the rest of the file
+# in sync with them and change it together; treat that one disjunct, and the comment
+# block on it, as this repo's own.
 #
 # Two things to know while working on this file:
 #
@@ -56,7 +57,7 @@ jobs:
     # until the 6-hour default job limit.
     timeout-minutes: 5
 
-    # Alert on genuine failures of a ref that was PUSHED to this repo, and nothing else:
+    # Alert on genuine CI failures nobody else is already looking at, and nothing else:
     #   conclusion in (failure, startup_failure, timed_out)
     #                             -- an allowlist, never `!= 'success'`. `cancelled` and
     #                                `skipped` must stay quiet: `ci.yml` sets
@@ -69,37 +70,45 @@ jobs:
     #                                invalid on main never reaches a job at all, and a
     #                                hung job that hits its timeout would sail straight
     #                                past a bare `== 'failure'` test.
-    #   event == 'push'           -- the triggering run came from a `git push`, which in
-    #                                this repo means either a push to `main` (`ci.yml`
-    #                                is `push: branches: [main]`) or a `v*` release tag
-    #                                (`release.yml` is `push: tags: ["v*"]`). This one
-    #                                clause replaces the two the sibling copies use:
-    #                                  * it subsumes `event != 'pull_request'` -- a PR's
-    #                                    own red check is already in front of its author
-    #                                    -- since a `pull_request` run is not a `push`
-    #                                    run; and
-    #                                  * it replaces `head_branch == 'main'`, which could
-    #                                    NEVER match a tag-triggered Release run, because
-    #                                    `head_branch` on such a run is the tag name. The
-    #                                    publish path was therefore the one path this
-    #                                    listener could not report on -- see the header.
-    #                                Two consequences of gating on the event rather than
-    #                                the branch, both accepted knowingly:
-    #                                  * a failed `workflow_dispatch` run (e.g. a manual
-    #                                    Release dry run) no longer alerts. Somebody
-    #                                    pressed the button and is watching the result;
-    #                                    #alerts is for failures with nobody in front of
-    #                                    them.
-    #                                  * GitHub IGNORES a workflow's `branches:` filter
-    #                                    when it cannot PARSE the workflow file, and
-    #                                    raises a job-less failure named after the file
-    #                                    path on whatever branch was pushed. So a syntax
-    #                                    error in a workflow, on a feature branch, now
-    #                                    reaches #alerts (it has happened once here:
-    #                                    runs 33601314406 and 33601315324). That is
-    #                                    noise, and noise is the safe direction for this
-    #                                    file -- the failure mode we cannot afford is
-    #                                    silence.
+    #   event == 'push'           -- the triggering run came from a `git push`: a push to
+    #     OR                         `main` (`ci.yml` is `push: branches: [main]`) or a
+    #   ( head_branch == 'main'      `v*` release tag (`release.yml` is
+    #     AND                        `push: tags: ["v*"]`).
+    #     event != 'pull_request' ) The `push` disjunct is this repo's own addition; the
+    #                                other one is what zimmer and strad carry. Why both,
+    #                                rather than the tidier swap of one for the other:
+    #                                  * `head_branch == 'main'` ALONE can never match a
+    #                                    tag-triggered Release run, because `head_branch`
+    #                                    on such a run is the tag name. That left the
+    #                                    publish path -- the most consequential workflow
+    #                                    here -- as the one path this listener could not
+    #                                    report on. Hence the `push` disjunct.
+    #                                  * `event == 'push'` ALONE would drop every OTHER
+    #                                    trigger, and two of those matter. A manual
+    #                                    Release dispatch with `dry_run: false` runs a
+    #                                    REAL `npm publish`, so replacing the branch test
+    #                                    would have re-opened the same silence on the
+    #                                    other half of the publish path. And an enumerated
+    #                                    event list has exactly the defect the header
+    #                                    rejects for an enumerated workflow list: a
+    #                                    `schedule`, `release` or `repository_dispatch`
+    #                                    workflow added later would go red on `main` and
+    #                                    stay silent. Hence keeping the branch test.
+    #                                `event != 'pull_request'` rides with the branch test,
+    #                                as it does upstream: a PR's own red check is already
+    #                                in front of its author, and #alerts is not for it.
+    #                                One consequence, accepted knowingly: GitHub IGNORES a
+    #                                workflow's `branches:` filter when it cannot PARSE the
+    #                                workflow file, and raises a job-less failure named
+    #                                after the FILE PATH on whatever branch was pushed. So
+    #                                a syntax error in a workflow, on a feature branch,
+    #                                would now reach #alerts, rendering as
+    #                                `*Workflow:* .github/workflows/ci.yml`. This repo has
+    #                                produced two such runs (33601314406, 33601315324),
+    #                                both before this listener was on `main`, so none has
+    #                                actually been delivered. That is noise, and noise is
+    #                                the safe direction for this file -- the failure mode
+    #                                we cannot afford is silence.
     #   name != this one          -- "*" matches this workflow too, and GitHub allows
     #                                workflow_run chains several levels deep, so without
     #                                this the alert could alert on itself. Compared
@@ -115,7 +124,9 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       ( contains(fromJSON('["failure","startup_failure","timed_out"]'), github.event.workflow_run.conclusion) &&
-        github.event.workflow_run.event == 'push' &&
+        ( github.event.workflow_run.event == 'push' ||
+          ( github.event.workflow_run.head_branch == 'main' &&
+            github.event.workflow_run.event != 'pull_request' ) ) &&
         github.event.workflow_run.name != 'CI failure alert' )
 
     steps:
