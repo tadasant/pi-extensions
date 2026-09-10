@@ -238,10 +238,15 @@ the runner owner serves it on a condition (documented in `ci-runner/README.md` i
   jobs point `TMPDIR` at `RUNNER_TEMP`, which the runner purges per job, so `mkdtemp` scratch
   directories do not pile up under `/tmp`.
 
-`alert-ci-failure.yml` posts every main-branch workflow failure to `#alerts` in the Tadasant
-Slack. It is a verbatim copy of zimmer's listener and reads two repo secrets,
-`SLACK_BOT_TOKEN` and `SLACK_ALERTS_CHANNEL_ID`; keep it in sync with the sibling repos rather
-than editing it here alone. It runs on `ubuntu-latest` on purpose, so a broken runner pool can
+`alert-ci-failure.yml` posts every failure of a **pushed ref** — `main`, and the `v*` release
+tags — to `#alerts` in the Tadasant Slack, and reads two repo secrets, `SLACK_BOT_TOKEN` and
+`SLACK_ALERTS_CHANNEL_ID`. It began as a verbatim copy of zimmer's listener and is **no longer
+verbatim**, in exactly one place: the alert job gates on `workflow_run.event == 'push'` where
+zimmer and strad gate on `head_branch == 'main'`. That deviation is deliberate and specific to
+this repo — `release.yml` here fires on `push: tags: ["v*"]`, and a tag-triggered run carries
+the *tag* in `head_branch`, so a branch-name gate could never alert on a failed publish. Keep
+the rest of the file in sync with the sibling repos and change it together; treat that one
+clause as this repo's own. It runs on `ubuntu-latest` on purpose, so a broken runner pool can
 still be reported, and it only fires from the copy on `main` — a change to it does nothing
 until merged, and the smoke test is a post-merge `workflow_dispatch`.
 

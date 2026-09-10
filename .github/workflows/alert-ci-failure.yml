@@ -1,6 +1,7 @@
 name: CI failure alert
 
-# Posts every main-branch CI failure in this repo to #alerts in the Tadasant Slack.
+# Posts every failure of a pushed ref in this repo -- `main`, and the `v*` release
+# tags -- to #alerts in the Tadasant Slack.
 #
 # One listener for the whole repo, rather than an alert job bolted onto each of the
 # other workflows. `workflows: ["*"]` matches EVERY workflow in the repo, so a
@@ -8,8 +9,16 @@ name: CI failure alert
 # it up. An enumerated list would leave a new workflow silently uncovered, which is
 # precisely the failure this alert exists to prevent.
 #
-# Your other repos may carry the identical listener under the identical secret names.
-# If so, keep them in sync; change them together.
+# tadasant/zimmer and tadasant/strad carry this listener under the identical secret
+# names, and it started life as a verbatim copy of theirs. It is NO LONGER verbatim,
+# deliberately, in exactly one place: the `if:` below gates on the triggering EVENT
+# (`workflow_run.event == 'push'`) where the sibling copies gate on the BRANCH NAME
+# (`head_branch == 'main'`). The reason is local to this repo -- `release.yml` here
+# fires on `push: tags: ["v*"]`, and a tag-triggered run carries the TAG in
+# `head_branch` (`v0.2.0`), never `main`, so a branch-name gate could never alert on
+# a failed release. zimmer and strad release from a push to `main` and do not have
+# the problem. Keep the rest of the file in sync with them and change it together;
+# treat that one clause, and the comment block on it, as this repo's own.
 #
 # Two things to know while working on this file:
 #
@@ -47,7 +56,7 @@ jobs:
     # until the 6-hour default job limit.
     timeout-minutes: 5
 
-    # Alert on genuine main-branch CI failures, and nothing else:
+    # Alert on genuine failures of a ref that was PUSHED to this repo, and nothing else:
     #   conclusion in (failure, startup_failure, timed_out)
     #                             -- an allowlist, never `!= 'success'`. `cancelled` and
     #                                `skipped` must stay quiet: `ci.yml` sets
@@ -60,9 +69,37 @@ jobs:
     #                                invalid on main never reaches a job at all, and a
     #                                hung job that hits its timeout would sail straight
     #                                past a bare `== 'failure'` test.
-    #   head_branch == 'main'     -- feature branches are the author's problem.
-    #   event != 'pull_request'   -- a PR's own red check is already in front of its
-    #                                author; #alerts is for main.
+    #   event == 'push'           -- the triggering run came from a `git push`, which in
+    #                                this repo means either a push to `main` (`ci.yml`
+    #                                is `push: branches: [main]`) or a `v*` release tag
+    #                                (`release.yml` is `push: tags: ["v*"]`). This one
+    #                                clause replaces the two the sibling copies use:
+    #                                  * it subsumes `event != 'pull_request'` -- a PR's
+    #                                    own red check is already in front of its author
+    #                                    -- since a `pull_request` run is not a `push`
+    #                                    run; and
+    #                                  * it replaces `head_branch == 'main'`, which could
+    #                                    NEVER match a tag-triggered Release run, because
+    #                                    `head_branch` on such a run is the tag name. The
+    #                                    publish path was therefore the one path this
+    #                                    listener could not report on -- see the header.
+    #                                Two consequences of gating on the event rather than
+    #                                the branch, both accepted knowingly:
+    #                                  * a failed `workflow_dispatch` run (e.g. a manual
+    #                                    Release dry run) no longer alerts. Somebody
+    #                                    pressed the button and is watching the result;
+    #                                    #alerts is for failures with nobody in front of
+    #                                    them.
+    #                                  * GitHub IGNORES a workflow's `branches:` filter
+    #                                    when it cannot PARSE the workflow file, and
+    #                                    raises a job-less failure named after the file
+    #                                    path on whatever branch was pushed. So a syntax
+    #                                    error in a workflow, on a feature branch, now
+    #                                    reaches #alerts (it has happened once here:
+    #                                    runs 33601314406 and 33601315324). That is
+    #                                    noise, and noise is the safe direction for this
+    #                                    file -- the failure mode we cannot afford is
+    #                                    silence.
     #   name != this one          -- "*" matches this workflow too, and GitHub allows
     #                                workflow_run chains several levels deep, so without
     #                                this the alert could alert on itself. Compared
@@ -78,8 +115,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       ( contains(fromJSON('["failure","startup_failure","timed_out"]'), github.event.workflow_run.conclusion) &&
-        github.event.workflow_run.head_branch == 'main' &&
-        github.event.workflow_run.event != 'pull_request' &&
+        github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.name != 'CI failure alert' )
 
     steps:
@@ -95,6 +131,10 @@ jobs:
           # payload is then assembled by jq, which does the JSON escaping -- hand-rolled
           # "{\"text\":\"$MSG\"}" breaks on the first commit message containing a quote.
           WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          # The ref that failed. Not always `main` any more: a failed Release run
+          # reports its tag, so hardcoding "on main" in the message would send the
+          # reader of #alerts to look at the wrong ref.
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
           COMMIT_MESSAGE: ${{ github.event.workflow_run.head_commit.message }}
           COMMIT_AUTHOR: ${{ github.event.workflow_run.head_commit.author.name }}
           FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -109,6 +149,7 @@ jobs:
             COMMIT_MESSAGE="Smoke test of Slack delivery, dispatched by @${GITHUB_ACTOR}"
             COMMIT_AUTHOR="$GITHUB_ACTOR"
             FAILED_RUN_ID="$GITHUB_RUN_ID"
+            HEAD_BRANCH="$GITHUB_REF_NAME"
           fi
 
           # First line only: a commit body can run for paragraphs, and #alerts wants the
@@ -126,6 +167,7 @@ jobs:
           # not read the workflow file, so it may have no name to report -- and that is
           # the one alert class with no other signal to go on.
           WORKFLOW_NAME="${WORKFLOW_NAME:-(unnamed workflow)}"
+          HEAD_BRANCH="${HEAD_BRANCH:-(ref unknown)}"
 
           # Slack's `text` caps at 40k characters and rejects the whole message with
           # `msg_too_long` past it, so an absurd single-line commit subject would take
@@ -140,6 +182,7 @@ jobs:
             --arg channel "$SLACK_ALERTS_CHANNEL_ID" \
             --arg repo "$REPO" \
             --arg workflow "$WORKFLOW_NAME" \
+            --arg ref "$HEAD_BRANCH" \
             --arg subject "$COMMIT_SUBJECT" \
             --arg author "$COMMIT_AUTHOR" \
             --arg url "$RUN_URL" \
@@ -150,7 +193,7 @@ jobs:
             def slack: gsub("&"; "&amp;") | gsub("<"; "&lt;") | gsub(">"; "&gt;");
             {
               channel: $channel,
-              text: ("🚨 *CI failure on `main`* in `\($repo | slack)`\n"
+              text: ("🚨 *CI failure on `\($ref | slack)`* in `\($repo | slack)`\n"
                    + "*Workflow:* \($workflow | slack)\n"
                    + "*Commit:* \($subject | slack) — _\($author | slack)_\n"
                    + "<\($url)|View the failed run>")
