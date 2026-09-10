@@ -238,12 +238,31 @@ the runner owner serves it on a condition (documented in `ci-runner/README.md` i
   jobs point `TMPDIR` at `RUNNER_TEMP`, which the runner purges per job, so `mkdtemp` scratch
   directories do not pile up under `/tmp`.
 
-`alert-ci-failure.yml` posts every main-branch workflow failure to `#alerts` in the Tadasant
-Slack. It is a verbatim copy of zimmer's listener and reads two repo secrets,
-`SLACK_BOT_TOKEN` and `SLACK_ALERTS_CHANNEL_ID`; keep it in sync with the sibling repos rather
-than editing it here alone. It runs on `ubuntu-latest` on purpose, so a broken runner pool can
-still be reported, and it only fires from the copy on `main` — a change to it does nothing
-until merged, and the smoke test is a post-merge `workflow_dispatch`.
+`alert-ci-failure.yml` posts CI failures to `#alerts` in the Tadasant Slack, and reads two repo
+secrets, `SLACK_BOT_TOKEN` and `SLACK_ALERTS_CHANNEL_ID`. It began as a verbatim copy of
+zimmer's listener and is **no longer verbatim**, in exactly one place: the alert job fires on a
+triggering run whose `workflow_run.event` is `push`, **in addition to** the sibling repos'
+`head_branch == 'main' && event != 'pull_request'` test. That extra disjunct is deliberate and
+specific to this repo — `release.yml` here fires on `push: tags: ["v*"]`, and a tag-triggered
+run carries the *tag* in `head_branch`, never `main`, so the branch test alone could never
+alert on a failed publish. It is an addition rather than a swap because `event == 'push'` alone
+would drop a manually dispatched Release with `dry_run: false` (a **real** `npm publish`), and
+would enumerate events the way the header refuses to enumerate workflows — a `schedule` or
+`release` workflow added later would go red on `main` and stay silent. Keep the rest of the
+file in sync with the sibling repos and change it together; treat that one disjunct as this
+repo's own.
+
+Two consequences of the `push` disjunct are worth knowing before you edit it. It matches **any**
+pushed ref, not just `main` and `v*`: GitHub ignores a workflow's `branches:` filter when it
+cannot *parse* the workflow file, so a YAML syntax error in a workflow, on a feature branch,
+now reaches `#alerts` (rendering as `*Workflow:* .github/workflows/ci.yml`, since such a run has
+no name). That is noise, and noise is the safe direction here — the failure mode this file
+cannot afford is silence. And a workflow you add with an unfiltered `on: push:` would put every
+feature-branch failure into the channel; filter it to `main` as `ci.yml` does.
+
+The listener runs on `ubuntu-latest` on purpose, so a broken runner pool can still be reported,
+and it only fires from the copy on `main` — a change to it does nothing until merged, and the
+smoke test is a post-merge `workflow_dispatch`.
 
 ## Core Principles
 
