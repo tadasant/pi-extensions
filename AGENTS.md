@@ -214,33 +214,32 @@ the aggregate job at the end of `ci.yml`. Requiring that single check rather tha
 jobs means adding or renaming a CI job never needs a settings change; it does mean a new job
 must be added to that job's `needs:` list or it will not gate anything.
 
-## CI runs on a shared self-hosted runner pool
+## CI runs on GitHub-hosted runners
 
-`ci.yml` and the `verify` job of `release.yml` run on `runs-on: self-hosted` — two repo-level
-runners, `tadasant-pi-extensions-ci-1/2`, on a box shared with other tenants — the same
-arrangement as `tadasant/zimmer` and `tadasant/strad`. This repo is public, and a self-hosted
-runner on a public repo would otherwise execute any stranger's fork-PR code on that box, so
-the runner owner serves it on a condition (documented in `ci-runner/README.md` in
-`tadasant/tadasant-internal`, "Serving a public repo"):
+Every job in `.github/workflows/` runs on `runs-on: ubuntu-latest`, which is free and unmetered
+for a public repo. Until 2026-11 `ci.yml` and `release.yml`'s `verify` job ran on a shared
+self-hosted pool (`tadasant-pi-extensions-ci-1/2`); that box went down, and all public repos
+moved to hosted runners.
 
-- **Every job that checks out code carries the fork guard**
+- **Hard-code `ubuntu-latest`.** Do not add a variable-based switch back to `self-hosted`: on
+  a public repo, a fork PR must never be able to reach a box we own.
+- **Every job carries `timeout-minutes`.** Add one to any job you add; the 6-hour default
+  turns a hung Pi subprocess into hours of a stuck check.
+- **Each job is a fresh VM**, so nothing needs cleaning up after it — `.e2e-cache` is
+  workspace-relative and restored by `actions/cache`, and `mkdtemp` scratch directories go
+  to the VM's own `/tmp`. Get tools from setup actions (`actions/setup-node`), never from
+  whatever happens to be preinstalled on a runner.
+- **The fork guard stays.** Every job that checks out code carries
   `if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}`.
-  A fork PR skips those jobs; `all-checks-pass` has no checkout and no guard, treats `skipped`
-  as neither pass nor fail, and so still reports. The consequence is that a fork PR is not
-  tested by CI at all — deliberate, and free in practice because this repo does not take
-  outside PRs. **When you add a job to `ci.yml`, add the guard to it.** A checkout job without
-  it is the one thing that makes the repo unsafe on those runners; the checker
-  `ci-runner/scripts/check-fork-guard.py --local .github/workflows` in `tadasant-internal`
-  must exit 0.
-- **The repo's fork-PR approval policy is `all_external_contributors`** (a repo setting).
-  Co-equal with the guard: a fork could otherwise propose a `ci.yml` with the guard removed.
-- **The box is persistent and shared.** Nothing may leave state outside the workspace; the
-  jobs point `TMPDIR` at `RUNNER_TEMP`, which the runner purges per job, so `mkdtemp` scratch
-  directories do not pile up under `/tmp`.
+  It was the self-hosted pool's condition for serving a public repo and is no longer a safety
+  requirement, but it is kept, and a new checkout job in `ci.yml` should carry it too for
+  consistency. A fork PR skips those jobs; `all-checks-pass` has no checkout and no guard,
+  treats `skipped` as neither pass nor fail, and so still reports. A fork PR is therefore not
+  tested by CI at all — free in practice because this repo does not take outside PRs.
 
 `alert-ci-failure.yml` posts CI failures to `#alerts` in the Tadasant Slack, and reads two repo
 secrets, `SLACK_BOT_TOKEN` and `SLACK_ALERTS_CHANNEL_ID`. It began as a verbatim copy of
-zimmer's listener and is **no longer verbatim**, in exactly one place: the alert job fires on a
+zimmer's listener and is **no longer verbatim**, in exactly one behavioural place: the alert job fires on a
 triggering run whose `workflow_run.event` is `push`, **in addition to** the sibling repos'
 `head_branch == 'main' && event != 'pull_request'` test. That extra disjunct is deliberate and
 specific to this repo — `release.yml` here fires on `push: tags: ["v*"]`, and a tag-triggered
@@ -250,7 +249,8 @@ would drop a manually dispatched Release with `dry_run: false` (a **real** `npm 
 would enumerate events the way the header refuses to enumerate workflows — a `schedule` or
 `release` workflow added later would go red on `main` and stay silent. Keep the rest of the
 file in sync with the sibling repos and change it together; treat that one disjunct as this
-repo's own.
+repo's own. (The comments about which runner it uses also differ, since the siblings' CI is
+still self-hosted and this repo's is not — a comment-only difference.)
 
 Two consequences of the `push` disjunct are worth knowing before you edit it. It matches **any**
 pushed ref, not just `main` and `v*`: GitHub ignores a workflow's `branches:` filter when it
@@ -260,9 +260,9 @@ no name). That is noise, and noise is the safe direction here — the failure mo
 cannot afford is silence. And a workflow you add with an unfiltered `on: push:` would put every
 feature-branch failure into the channel; filter it to `main` as `ci.yml` does.
 
-The listener runs on `ubuntu-latest` on purpose, so a broken runner pool can still be reported,
-and it only fires from the copy on `main` — a change to it does nothing until merged, and the
-smoke test is a post-merge `workflow_dispatch`.
+The listener runs on `ubuntu-latest` (in the sibling repos, on purpose, so a broken
+self-hosted pool can still be reported), and it only fires from the copy on `main` — a change
+to it does nothing until merged, and the smoke test is a post-merge `workflow_dispatch`.
 
 ## Core Principles
 

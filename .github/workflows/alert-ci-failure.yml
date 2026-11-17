@@ -12,14 +12,16 @@ name: CI failure alert
 #
 # tadasant/zimmer and tadasant/strad carry this listener under the identical secret
 # names, and it started life as a verbatim copy of theirs. It is NO LONGER verbatim,
-# deliberately, in exactly one place: the `if:` below alerts on a triggering run whose
+# deliberately, in exactly one behavioural place: the `if:` below alerts on a triggering run whose
 # EVENT is `push`, IN ADDITION TO the sibling copies' branch-name test. The reason is
 # local to this repo -- `release.yml` here fires on `push: tags: ["v*"]`, and a
 # tag-triggered run carries the TAG in `head_branch` (`v0.2.0`), never `main`, so the
 # branch-name test alone could never alert on a failed release. zimmer and strad
 # release from a push to `main` and do not have the problem. Keep the rest of the file
 # in sync with them and change it together; treat that one disjunct, and the comment
-# block on it, as this repo's own.
+# block on it, as this repo's own. (The runner comments below also differ, because
+# this repo's CI runs on ubuntu-latest while the siblings' runs self-hosted; that
+# difference is comment-only.)
 #
 # Two things to know while working on this file:
 #
@@ -27,9 +29,10 @@ name: CI failure alert
 #     on a feature branch change nothing until they merge, and `workflow_dispatch`
 #     below only appears in the Actions UI once this is on main. Post-merge, dispatch
 #     it manually to smoke-test Slack delivery end to end.
-#   - The alert runs on ubuntu-latest, NOT the self-hosted runners the rest of this
-#     repo uses. Deliberate: a degraded runner pool is itself a failure worth alerting
-#     on, and an alert that runs on the broken thing cannot report it.
+#   - The alert runs on ubuntu-latest. In the sibling repos that is deliberately NOT
+#     the self-hosted pool their CI uses, so a degraded runner pool can still be
+#     reported. This repo's own CI has since moved to ubuntu-latest too, so here the
+#     choice simply matches the rest of the repo; keep it on a GitHub-hosted runner.
 #
 # Requires two repo secrets (Settings -> Secrets and variables -> Actions):
 #   SLACK_BOT_TOKEN         xoxb-... for the Tadasant workspace, with chat:write.
@@ -49,8 +52,8 @@ permissions: {}
 
 jobs:
   alert:
-    # See the header: ubuntu-latest on purpose, so the alert still fires when the
-    # self-hosted runners are what broke.
+    # See the header: ubuntu-latest on purpose, so the alert never depends on a
+    # self-hosted runner pool being up.
     runs-on: ubuntu-latest
 
     # A stalled connection to Slack must not sit on a GitHub-hosted (billable) runner
