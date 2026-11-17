@@ -9,11 +9,9 @@ name: Release
 #
 # Triggered by pushing a tag like `v0.1.0`, or manually with a dry-run option.
 #
-# `verify` runs on the shared self-hosted runner pool, like ci.yml and like the
-# release workflows in tadasant/zimmer and tadasant/strad. It needs no fork guard:
-# neither trigger here (a tag push, a manual dispatch) can be raised by an outside
-# contributor, so fork code cannot reach the box through this workflow. `publish`
-# stays on ubuntu-latest — see the comment on that job.
+# Both jobs run on GitHub-hosted `ubuntu-latest`, like ci.yml. Neither needs a fork
+# guard: neither trigger here (a tag push, a manual dispatch) can be raised by an
+# outside contributor.
 on:
   push:
     tags: ["v*"]
@@ -30,13 +28,10 @@ permissions:
 jobs:
   verify:
     name: Verify before publishing
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      # The runner purges RUNNER_TEMP per job; a persistent box would otherwise
-      # accumulate the e2e suite's mkdtemp scratch directories under /tmp forever.
-      - name: Point TMPDIR at the per-job temp dir
-        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -57,15 +52,15 @@ jobs:
   publish:
     name: Publish to npm
     needs: verify
-    # Deliberately ubuntu-latest, not self-hosted: `npm publish --provenance` mints a
-    # SLSA attestation from the GitHub OIDC token, and npm's provenance documentation
-    # requires a cloud-hosted runner for it. A release job that runs a couple of
-    # times a month is not worth the runner minutes anyway.
+    # Must stay on a GitHub-hosted runner: `npm publish --provenance` mints a SLSA
+    # attestation from the GitHub OIDC token, and npm's provenance documentation
+    # requires a cloud-hosted runner for it.
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: npm-publish
     # `id-token: write` is what `npm publish --provenance` needs to mint its
     # attestation. Granted here, to this job only, rather than workflow-wide: the
-    # `verify` job above runs arbitrary test subprocesses on a shared box and has no
+    # `verify` job above runs arbitrary test subprocesses and has no
     # business holding an OIDC-minting permission.
     permissions:
       contents: read

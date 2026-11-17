@@ -6,44 +6,26 @@ name: CI
 # pinned Pi CLI and drives the real binary against a simulated LLM on localhost.
 # It needs no secrets and makes no model-provider network calls.
 #
-# Runs on the shared self-hosted GitHub Actions runner pool (label `self-hosted`,
-# runners `tadasant-pi-extensions-ci-*`) that this repo registers against, the same
-# arrangement as tadasant/zimmer and tadasant/strad. Two things follow from that:
+# Runs on GitHub-hosted `ubuntu-latest` runners, which are free and unmetered for a
+# public repo. The label is hard-coded on purpose: there is no variable-based switch
+# back to a self-hosted runner, because a fork PR on a public repo must never be able
+# to reach a box we own. Each hosted job gets a fresh VM, so the e2e cache
+# (`.e2e-cache`, workspace-relative) and the suites' mkdtemp scratch directories
+# vanish with the job and nothing needs cleaning up.
 #
-#   - This repo is PUBLIC, and a self-hosted runner on a public repo would otherwise
-#     execute any stranger's fork-PR code on a box we do not own. So every job that
-#     checks out code carries the fork guard:
+# Every job that checks out code still carries the fork guard:
 #
-#       if: github.event_name == 'push'
-#           || github.event.pull_request.head.repo.full_name == github.repository
+#   if: github.event_name == 'push'
+#       || github.event.pull_request.head.repo.full_name == github.repository
 #
-#     A push, or a PR from a branch in this repo, runs. A PR from a fork SKIPS these
-#     jobs, and `all-checks-pass` below, which has no checkout step and no guard,
-#     lets the skips through so the one required check still reports. The trade-off
-#     is deliberate: a fork PR is not tested by CI at all. This repo does not take
-#     outside PRs, so that costs nothing in practice.
+# It was the condition under which the old shared self-hosted pool would serve this
+# public repo. On hosted runners it is no longer a safety requirement, but it is kept
+# as-is: a fork PR SKIPS these jobs, and `all-checks-pass` below, which has no
+# checkout step and no guard, lets the skips through so the one required check still
+# reports. This repo does not take outside PRs, so not testing fork PRs costs nothing.
 #
-#     The guard protects this file as written. On a `pull_request` event GitHub runs
-#     the workflow from the PR's merge ref, so a fork could also propose a ci.yml
-#     with the guard removed. What closes that is the repo's fork-PR approval policy
-#     (`all_external_contributors`, a repo setting, not a workflow): no workflow
-#     runs for an outside PR until a maintainer approves it, and the maintainer must
-#     read any change under `.github/workflows/` before clicking approve. The two
-#     together are the condition under which the runner owner serves a public repo
-#     at all. Do not remove the guard from a job, and do not add a checkout job
-#     without it.
-#
-#   - Two jobs from this repo can run concurrently on the same box, each in its own
-#     runner work directory, and the box is persistent, so nothing here may leave
-#     state behind outside the workspace. The e2e cache (`.e2e-cache`) is
-#     workspace-relative; the test scratch directories come from mkdtemp under
-#     `TMPDIR`, which the jobs below point at `RUNNER_TEMP` because the runner
-#     purges that directory per job and would never touch a stray `/tmp/pi-e2e-*`.
-#     The one shared absolute path is `~/.npm`, which `setup-node`'s npm cache
-#     restores into; npm's cache is content-addressed and built for concurrent
-#     writers, so that is tolerated rather than avoided.
-#
-# If you fork this repo, switch the jobs back to `ubuntu-latest`.
+# Every job carries `timeout-minutes`, so a hung Pi subprocess or a stalled download
+# fails the run in minutes rather than burning the 6-hour default.
 on:
   pull_request:
     branches: [main]
@@ -64,7 +46,8 @@ jobs:
   lint:
     name: Lint and typecheck
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -82,14 +65,10 @@ jobs:
   unit:
     name: Unit tests
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
-      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
-      # because the `runner` context is not available there.
-      - name: Point TMPDIR at the per-job temp dir
-        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -100,14 +79,10 @@ jobs:
   e2e:
     name: E2E against pinned Pi
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
-      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
-      # because the `runner` context is not available there.
-      - name: Point TMPDIR at the per-job temp dir
-        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -130,14 +105,10 @@ jobs:
   package:
     name: Publish dry run
     if: ${{ github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      # See the header: the runner purges RUNNER_TEMP per job, so mkdtemp scratch
-      # dirs land somewhere that is cleaned. A step rather than a job-level `env:`
-      # because the `runner` context is not available there.
-      - name: Point TMPDIR at the per-job temp dir
-        run: echo "TMPDIR=${RUNNER_TEMP}" >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -167,7 +138,8 @@ jobs:
   all-checks-pass:
     name: all-checks-pass
     if: ${{ !cancelled() }}
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs:
       - lint
       - unit
