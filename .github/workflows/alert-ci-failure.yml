@@ -12,14 +12,16 @@ name: CI failure alert
 #
 # tadasant/zimmer and tadasant/strad carry this listener under the identical secret
 # names, and it started life as a verbatim copy of theirs. It is NO LONGER verbatim,
-# deliberately, in exactly one place: the `if:` below alerts on a triggering run whose
+# deliberately, in exactly one behavioural place: the `if:` below alerts on a triggering run whose
 # EVENT is `push`, IN ADDITION TO the sibling copies' branch-name test. The reason is
 # local to this repo -- `release.yml` here fires on `push: tags: ["v*"]`, and a
 # tag-triggered run carries the TAG in `head_branch` (`v0.2.0`), never `main`, so the
 # branch-name test alone could never alert on a failed release. zimmer and strad
 # release from a push to `main` and do not have the problem. Keep the rest of the file
 # in sync with them and change it together; treat that one disjunct, and the comment
-# block on it, as this repo's own.
+# block on it, as this repo's own. (The runner comments below also differ, because
+# this repo's CI runs on ubuntu-latest while the siblings' runs self-hosted; that
+# difference is comment-only.)
 #
 # Two things to know while working on this file:
 #
@@ -54,8 +56,8 @@ jobs:
     # self-hosted runner pool being up.
     runs-on: ubuntu-latest
 
-    # A stalled connection to Slack must not hold a runner until the 6-hour default
-    # job limit.
+    # A stalled connection to Slack must not sit on a GitHub-hosted (billable) runner
+    # until the 6-hour default job limit.
     timeout-minutes: 5
 
     # Alert on genuine CI failures nobody else is already looking at, and nothing else:

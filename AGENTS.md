@@ -239,7 +239,7 @@ moved to hosted runners.
 
 `alert-ci-failure.yml` posts CI failures to `#alerts` in the Tadasant Slack, and reads two repo
 secrets, `SLACK_BOT_TOKEN` and `SLACK_ALERTS_CHANNEL_ID`. It began as a verbatim copy of
-zimmer's listener and is **no longer verbatim**, in exactly one place: the alert job fires on a
+zimmer's listener and is **no longer verbatim**, in exactly one behavioural place: the alert job fires on a
 triggering run whose `workflow_run.event` is `push`, **in addition to** the sibling repos'
 `head_branch == 'main' && event != 'pull_request'` test. That extra disjunct is deliberate and
 specific to this repo — `release.yml` here fires on `push: tags: ["v*"]`, and a tag-triggered
@@ -249,7 +249,8 @@ would drop a manually dispatched Release with `dry_run: false` (a **real** `npm 
 would enumerate events the way the header refuses to enumerate workflows — a `schedule` or
 `release` workflow added later would go red on `main` and stay silent. Keep the rest of the
 file in sync with the sibling repos and change it together; treat that one disjunct as this
-repo's own.
+repo's own. (The comments about which runner it uses also differ, since the siblings' CI is
+still self-hosted and this repo's is not — a comment-only difference.)
 
 Two consequences of the `push` disjunct are worth knowing before you edit it. It matches **any**
 pushed ref, not just `main` and `v*`: GitHub ignores a workflow's `branches:` filter when it
